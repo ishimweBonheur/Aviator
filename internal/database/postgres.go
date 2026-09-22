@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-
 )
 
 func NewPostgres(databaseURL string) (*pgxpool.Pool, error) {

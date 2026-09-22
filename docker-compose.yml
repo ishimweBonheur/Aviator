@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: aviator_password
 
     ports:
-      - "5433:5432"
+      - "5434:5432"
 
     volumes:
       - aviator_postgres_data:/var/lib/postgresql
@@ -24,6 +24,9 @@ services:
 
     env_file:
       - .env
+
+    environment:
+      DATABASE_URL: postgres://aviator:aviator_password@postgres:5432/aviator?sslmode=disable
 
     ports:
       - "7000:7000"

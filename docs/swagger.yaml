@@ -1,0 +1,421 @@
+basePath: /
+definitions:
+  auth.ErrorResponse:
+    properties:
+      error:
+        example: invalid request body
+        type: string
+    type: object
+  auth.LoginRequest:
+    properties:
+      email:
+        example: bonheur@example.com
+        type: string
+      password:
+        example: password123
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  auth.LoginResponse:
+    properties:
+      token:
+        example: JWT_TOKEN
+        type: string
+      user:
+        $ref: '#/definitions/auth.User'
+    type: object
+  auth.RegisterRequest:
+    properties:
+      email:
+        example: bonheur@example.com
+        type: string
+      password:
+        example: password123
+        minLength: 8
+        type: string
+      username:
+        example: bonheur
+        type: string
+    required:
+    - email
+    - password
+    - username
+    type: object
+  auth.RegisterResponse:
+    properties:
+      user:
+        $ref: '#/definitions/auth.User'
+    type: object
+  auth.User:
+    properties:
+      email:
+        type: string
+      id:
+        format: int64
+        type: integer
+      username:
+        type: string
+    type: object
+  game.GameRound:
+    properties:
+      client_seed:
+        type: string
+      crash_point:
+        type: number
+      created_at:
+        type: string
+      ended_at:
+        type: string
+      id:
+        type: integer
+      nonce:
+        type: integer
+      round_number:
+        type: integer
+      server_seed:
+        type: string
+      server_seed_hash:
+        type: string
+      started_at:
+        type: string
+      status:
+        $ref: '#/definitions/game.RoundStatus'
+    type: object
+  game.RoundStatus:
+    enum:
+    - CREATED
+    - BETTING_OPEN
+    - BETTING_CLOSED
+    - RUNNING
+    - CRASHED
+    - SETTLED
+    type: string
+    x-enum-varnames:
+    - RoundCreated
+    - RoundBettingOpen
+    - RoundBettingClosed
+    - RoundRunning
+    - RoundCrashed
+    - RoundSettled
+  wallet.BalanceResponse:
+    properties:
+      balance:
+        example: "1000.00"
+        type: string
+      user_id:
+        example: 1
+        type: integer
+    type: object
+host: localhost:7000
+info:
+  contact: {}
+  description: HTTP API for the Aviator real-money game backend.
+  title: Aviator Backend API
+  version: "1.0"
+paths:
+  /api/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates a user with an email and password and returns a JWT.
+      parameters:
+      - description: Login credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/auth.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/auth.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/auth.ErrorResponse'
+      summary: Log in
+      tags:
+      - auth
+  /api/auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Creates a user account. Username and email are required, and the
+        password must be at least 8 characters.
+      parameters:
+      - description: Registration details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/auth.RegisterResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/auth.ErrorResponse'
+      summary: Register a user
+      tags:
+      - auth
+  /api/game/rounds:
+    post:
+      description: Creates a new game round when no other round is active.
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/game.GameRound'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create game round
+      tags:
+      - game
+  /api/game/rounds/{id}:
+    get:
+      description: Returns a game round by its database ID.
+      parameters:
+      - description: Round ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/game.GameRound'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get game round
+      tags:
+      - game
+  /api/game/rounds/{id}/close:
+    post:
+      description: Moves a game round from BETTING_OPEN to BETTING_CLOSED.
+      parameters:
+      - description: Round ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/game.GameRound'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Close betting
+      tags:
+      - game
+  /api/game/rounds/{id}/crash:
+    post:
+      description: Moves a game round from RUNNING to CRASHED.
+      parameters:
+      - description: Round ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/game.GameRound'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Crash game round
+      tags:
+      - game
+  /api/game/rounds/{id}/open:
+    post:
+      description: Moves a game round from CREATED to BETTING_OPEN.
+      parameters:
+      - description: Round ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/game.GameRound'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Open betting
+      tags:
+      - game
+  /api/game/rounds/{id}/settle:
+    post:
+      description: Moves a game round from CRASHED to SETTLED.
+      parameters:
+      - description: Round ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/game.GameRound'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Settle game round
+      tags:
+      - game
+  /api/game/rounds/{id}/start:
+    post:
+      description: Moves a game round from BETTING_CLOSED to RUNNING.
+      parameters:
+      - description: Round ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/game.GameRound'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Start game round
+      tags:
+      - game
+  /api/game/rounds/current:
+    get:
+      description: Returns the latest active game round, if one exists.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/game.GameRound'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get current game round
+      tags:
+      - game
+  /api/wallet/balance:
+    get:
+      description: Returns the current wallet balance for the authenticated user.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wallet.BalanceResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/auth.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/auth.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get wallet balance
+      tags:
+      - wallet
+  /health:
+    get:
+      description: Returns the current health status of the backend.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+schemes:
+- http
+securityDefinitions:
+  BearerAuth:
+    description: Enter your JWT token. Swagger UI will send it as "Bearer <token>".
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
