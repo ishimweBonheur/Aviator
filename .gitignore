@@ -1,0 +1,55 @@
+# ─── Environment / secrets ──────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Go ─────────────────────────────────────────────────
+# Compiled binaries
+aviator-server
+aviator-server.exe
+*.exe
+*.test
+*.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Vendor directory (uncomment if you vendor dependencies)
+# vendor/
+
+# Local overrides (docker-compose.override.yml is often machine-specific)
+docker-compose.override.yml
+
+# VS Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# JetBrains (GoLand, IntelliJ)
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Vim / Neovim
+*.swp
+*.swo
+*~
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+logs/
+tmp/
+temp/
+
+bin/
+dist/
+coverage.out
+coverage.html

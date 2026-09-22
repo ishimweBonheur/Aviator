@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: aviator-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: aviator
+      POSTGRES_USER: aviator
+      POSTGRES_PASSWORD: aviator_password
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - aviator_postgres_data:/var/lib/postgresql
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aviator-backend
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    ports:
+      - "7000:7000"
+
+    depends_on:
+      - postgres
+
+volumes:
+  aviator_postgres_data:
