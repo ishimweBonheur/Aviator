@@ -1,6 +1,7 @@
 package game
 
 import (
+	"aviator/backend/internal/fairness"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -10,12 +11,14 @@ import (
 )
 
 type Service struct {
-	repository *Repository
+	repository      *Repository
+	fairnessService *fairness.Service
 }
 
-func NewService(repository *Repository) *Service {
+func NewService(repository *Repository, fairnessService *fairness.Service) *Service {
 	return &Service{
-		repository: repository,
+		repository:      repository,
+		fairnessService: fairnessService,
 	}
 }
 
@@ -194,4 +197,51 @@ func hashSeed(seed string) string {
 	hash := sha256.Sum256([]byte(seed))
 
 	return hex.EncodeToString(hash[:])
+}
+func (s *Service) GenerateCrashPoint(
+	ctx context.Context,
+	roundID int64,
+) (*GameRound, error) {
+
+	round, err := s.repository.GetRoundByID(ctx, roundID)
+	if err != nil {
+		return nil, err
+	}
+
+	if round.Status != RoundBettingClosed {
+		return nil, fmt.Errorf(
+			"cannot generate crash point for round in status %s",
+			round.Status,
+		)
+	}
+
+	if round.ServerSeed == nil {
+		return nil, fmt.Errorf("server seed is missing")
+	}
+
+	result, err := s.fairnessService.GenerateCrashPoint(
+		*round.ServerSeed,
+		round.ClientSeed,
+		round.Nonce,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to generate crash point: %w",
+			err,
+		)
+	}
+
+	round, err = s.repository.SetCrashPoint(
+		ctx,
+		round.ID,
+		result.CrashPoint,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to save crash point: %w",
+			err,
+		)
+	}
+
+	return round, nil
 }

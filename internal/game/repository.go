@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/shopspring/decimal"
 )
 
 type Repository struct {
@@ -290,4 +291,68 @@ func (r *Repository) SettleRound(
 	}
 
 	return nil
+}
+func (r *Repository) SetCrashPoint(
+	ctx context.Context,
+	id int64,
+	crashPoint decimal.Decimal,
+) (*GameRound, error) {
+
+	var round GameRound
+
+	var crashPointString string
+
+	err := r.db.QueryRow(
+		ctx,
+		`
+		UPDATE game_rounds
+		SET crash_point = $2
+		WHERE id = $1
+		RETURNING
+			id,
+			round_number,
+			server_seed_hash,
+			server_seed,
+			client_seed,
+			nonce,
+			crash_point,
+			status,
+			started_at,
+			ended_at,
+			created_at
+		`,
+		id,
+		crashPoint.String(),
+	).Scan(
+		&round.ID,
+		&round.RoundNumber,
+		&round.ServerSeedHash,
+		&round.ServerSeed,
+		&round.ClientSeed,
+		&round.Nonce,
+		&crashPointString,
+		&round.Status,
+		&round.StartedAt,
+		&round.EndedAt,
+		&round.CreatedAt,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to set crash point: %w",
+			err,
+		)
+	}
+
+	parsedCrashPoint, err := decimal.NewFromString(crashPointString)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"invalid crash point in database: %w",
+			err,
+		)
+	}
+
+	round.CrashPoint = &parsedCrashPoint
+
+	return &round, nil
 }

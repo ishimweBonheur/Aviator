@@ -5,12 +5,14 @@ import (
 	"aviator/backend/internal/auth"
 	"aviator/backend/internal/config"
 	"aviator/backend/internal/database"
+	"aviator/backend/internal/fairness"
 	"aviator/backend/internal/game"
 	"aviator/backend/internal/wallet"
 	"context"
 	"log"
 	"net/http"
 
+	"github.com/shopspring/decimal"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
@@ -40,10 +42,12 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	// Configuration.
+	// Configuration
+
 	cfg := config.Load()
 
-	// PostgreSQL.
+	// PostgreSQL
+
 	db, err := database.NewPostgres(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
@@ -53,7 +57,23 @@ func main() {
 
 	log.Println("Connected to PostgreSQL")
 
-	// Authentication.
+	// Fairness
+
+	houseEdge, err := decimal.NewFromString(cfg.HouseEdge)
+	if err != nil {
+		log.Fatalf("failed to parse HOUSE_EDGE: %v", err)
+	}
+
+	fairnessService := fairness.NewService(
+		fairness.Config{
+			HouseEdge: houseEdge,
+		},
+	)
+
+	log.Printf("Fairness service initialized with house edge: %s", houseEdge.String())
+
+	// Authentication
+
 	authService := auth.NewService(
 		db,
 		cfg.JWTSecret,
@@ -61,16 +81,24 @@ func main() {
 
 	authHandler := auth.NewHandler(authService)
 
-	// Wallet.
+	// Wallet
+
 	walletRepository := wallet.NewRepository(db)
 	walletHandler := wallet.NewHandler(walletRepository)
 
-	// Game.
+	// Game
+
 	gameRepository := game.NewRepository(db)
-	gameService := game.NewService(gameRepository)
+
+	gameService := game.NewService(
+		gameRepository,
+		fairnessService,
+	)
+
 	gameHandler := game.NewHandler(gameService)
 
-	// Game engine.
+	// Game Engine
+
 	gameEngine := game.NewEngine(gameService)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -78,17 +106,31 @@ func main() {
 
 	go gameEngine.Run(ctx)
 
-	// Router.
+	// Router
+
 	mux := http.NewServeMux()
 
-	// Health.
-	mux.HandleFunc("/health", healthHandler)
+	// Health
 
-	// Public authentication routes.
-	mux.HandleFunc("/api/auth/register", authHandler.Register)
-	mux.HandleFunc("/api/auth/login", authHandler.Login)
+	mux.HandleFunc(
+		"/health",
+		healthHandler,
+	)
 
-	// Protected wallet routes.
+	// Authentication
+
+	mux.HandleFunc(
+		"/api/auth/register",
+		authHandler.Register,
+	)
+
+	mux.HandleFunc(
+		"/api/auth/login",
+		authHandler.Login,
+	)
+
+	// Protected Wallet Routes
+
 	mux.Handle(
 		"/api/wallet/balance",
 		authService.Middleware(
@@ -96,7 +138,8 @@ func main() {
 		),
 	)
 
-	// Game routes.
+	// Game Routes
+
 	mux.HandleFunc(
 		"/api/game/rounds",
 		gameHandler.CreateRound,
@@ -111,10 +154,12 @@ func main() {
 		"/api/game/rounds/",
 		func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
+
 			case http.MethodGet:
 				gameHandler.GetRound(w, r)
 
 			case http.MethodPost:
+
 				switch {
 				case hasSuffix(r.URL.Path, "/open"):
 					gameHandler.OpenBetting(w, r)
@@ -144,14 +189,15 @@ func main() {
 			}
 		},
 	)
+	// Swagger
 
-	// Swagger UI.
 	mux.Handle(
 		"/swagger/",
 		httpSwagger.WrapHandler,
 	)
 
-	// Start server.
+	// Start Server
+
 	addr := ":" + cfg.AppPort
 
 	log.Printf(
