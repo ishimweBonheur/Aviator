@@ -1,6 +1,8 @@
 package game
 
 import (
+	"aviator/backend/internal/multiplier"
+	"aviator/backend/internal/settlement"
 	"context"
 	"fmt"
 	"log"
@@ -11,27 +13,34 @@ import (
 )
 
 type Engine struct {
-	service *Service
+	service           *Service
+	multiplierService *multiplier.Service
+	settlementService *settlement.Service
 
 	mu      sync.Mutex
 	running bool
 }
 
-func NewEngine(service *Service) *Engine {
+func NewEngine(
+	service *Service,
+	multiplierService *multiplier.Service,
+	settlementService *settlement.Service,
+) *Engine {
 	return &Engine{
-		service: service,
+		service:           service,
+		multiplierService: multiplierService,
+		settlementService: settlementService,
 	}
 }
 
-// Run starts the game engine.
-//
-// The engine continuously creates and runs game rounds.
 func (e *Engine) Run(ctx context.Context) {
 	e.mu.Lock()
 
 	if e.running {
 		e.mu.Unlock()
+
 		log.Println("game engine is already running")
+
 		return
 	}
 
@@ -56,9 +65,11 @@ func (e *Engine) Run(ctx context.Context) {
 
 		default:
 			if err := e.runRound(ctx); err != nil {
-				log.Printf("game round error: %v", err)
+				log.Printf(
+					"game round error: %v",
+					err,
+				)
 
-				// Prevent a tight retry loop if something goes wrong.
 				select {
 				case <-ctx.Done():
 					return
@@ -70,16 +81,20 @@ func (e *Engine) Run(ctx context.Context) {
 	}
 }
 
-// runRound executes the complete lifecycle of one game round.
-func (e *Engine) runRound(ctx context.Context) error {
+func (e *Engine) runRound(
+	ctx context.Context,
+) error {
 
-	// --------------------------------------------------
-	// 1. Create round
-	// --------------------------------------------------
+	// ============================================================
+	// CREATE
+	// ============================================================
 
 	round, err := e.service.CreateRound(ctx)
 	if err != nil {
-		return fmt.Errorf("create round: %w", err)
+		return fmt.Errorf(
+			"create round: %w",
+			err,
+		)
 	}
 
 	log.Printf(
@@ -87,14 +102,19 @@ func (e *Engine) runRound(ctx context.Context) error {
 		round.RoundNumber,
 	)
 
-	// Open betting
+	// ============================================================
+	// OPEN BETTING
+	// ============================================================
 
 	round, err = e.service.OpenBetting(
 		ctx,
 		round.ID,
 	)
 	if err != nil {
-		return fmt.Errorf("open betting: %w", err)
+		return fmt.Errorf(
+			"open betting: %w",
+			err,
+		)
 	}
 
 	log.Printf(
@@ -102,23 +122,27 @@ func (e *Engine) runRound(ctx context.Context) error {
 		round.RoundNumber,
 	)
 
-	// Betting period
-
-	// Temporary betting period.
-	//
-	// Later this will move into configuration.
-	if err := waitFor(ctx, 5*time.Second); err != nil {
+	// Give players time to place bets.
+	if err := waitFor(
+		ctx,
+		5*time.Second,
+	); err != nil {
 		return err
 	}
 
-	// Close betting
+	// ============================================================
+	// CLOSE BETTING
+	// ============================================================
 
 	round, err = e.service.CloseBetting(
 		ctx,
 		round.ID,
 	)
 	if err != nil {
-		return fmt.Errorf("close betting: %w", err)
+		return fmt.Errorf(
+			"close betting: %w",
+			err,
+		)
 	}
 
 	log.Printf(
@@ -126,7 +150,9 @@ func (e *Engine) runRound(ctx context.Context) error {
 		round.RoundNumber,
 	)
 
-	// Generate crash point
+	// ============================================================
+	// GENERATE CRASH POINT
+	// ============================================================
 
 	round, err = e.service.GenerateCrashPoint(
 		ctx,
@@ -152,14 +178,19 @@ func (e *Engine) runRound(ctx context.Context) error {
 		round.CrashPoint.StringFixed(4),
 	)
 
-	// Start round
+	// ============================================================
+	// START ROUND
+	// ============================================================
 
 	round, err = e.service.StartRound(
 		ctx,
 		round.ID,
 	)
 	if err != nil {
-		return fmt.Errorf("start round: %w", err)
+		return fmt.Errorf(
+			"start round: %w",
+			err,
+		)
 	}
 
 	log.Printf(
@@ -167,19 +198,32 @@ func (e *Engine) runRound(ctx context.Context) error {
 		round.RoundNumber,
 	)
 
-	//  Run multiplier
+	// ============================================================
+	// RUN MULTIPLIER
+	// ============================================================
 
 	if err := e.runMultiplier(
 		ctx,
 		round,
 	); err != nil {
+
+		// Make sure the in-memory multiplier state
+		// does not remain running if the engine stops
+		// unexpectedly.
+		e.multiplierService.Stop(round.ID)
+
 		return fmt.Errorf(
 			"multiplier loop: %w",
 			err,
 		)
 	}
 
-	// Crash round
+	// The multiplier has reached the crash point.
+	e.multiplierService.Stop(round.ID)
+
+	// ============================================================
+	// CRASH ROUND
+	// ============================================================
 
 	round, err = e.service.CrashRound(
 		ctx,
@@ -198,9 +242,11 @@ func (e *Engine) runRound(ctx context.Context) error {
 		round.CrashPoint.StringFixed(4),
 	)
 
-	// Settle round
+	// ============================================================
+	// SETTLEMENT
+	// ============================================================
 
-	round, err = e.service.SettleRound(
+	result, err := e.settlementService.SettleRound(
 		ctx,
 		round.ID,
 	)
@@ -211,16 +257,19 @@ func (e *Engine) runRound(ctx context.Context) error {
 		)
 	}
 
+	// Remove the multiplier state only after
+	// the round has been successfully settled.
+	e.multiplierService.Remove(round.ID)
+
 	log.Printf(
-		"round #%d: settled",
+		"round #%d: settled, %d bets lost",
 		round.RoundNumber,
+		result.LostBets,
 	)
 
 	return nil
 }
 
-// runMultiplier runs the multiplier until it reaches
-// the predetermined crash point.
 func (e *Engine) runMultiplier(
 	ctx context.Context,
 	round *GameRound,
@@ -233,14 +282,15 @@ func (e *Engine) runMultiplier(
 		)
 	}
 
-	// Start at 1.00x.
-	multiplier := decimal.NewFromInt(1)
+	// Start the live multiplier state.
+	e.multiplierService.Start(round.ID)
 
-	// Temporary simulation tick.
-	//
-	// Later we will replace this with a time-based
-	// multiplier calculation.
-	ticker := time.NewTicker(100 * time.Millisecond)
+	multiplierValue := decimal.NewFromInt(1)
+
+	ticker := time.NewTicker(
+		100 * time.Millisecond,
+	)
+
 	defer ticker.Stop()
 
 	for {
@@ -251,39 +301,46 @@ func (e *Engine) runMultiplier(
 
 		case <-ticker.C:
 
-			// Check whether the multiplier has reached
+			// Check whether we have reached
 			// the predetermined crash point.
-			if multiplier.GreaterThanOrEqual(
+			if multiplierValue.GreaterThanOrEqual(
 				*round.CrashPoint,
 			) {
+
 				log.Printf(
-					"round #%d: 💥 multiplier reached crash point %sx",
+					"round #%d: crash reached at %sx",
 					round.RoundNumber,
-					multiplier.StringFixed(2),
+					multiplierValue.StringFixed(4),
 				)
 
 				return nil
 			}
 
+			// Publish the current multiplier
+			// to the in-memory multiplier service.
+			if err := e.multiplierService.Set(
+				round.ID,
+				multiplierValue,
+			); err != nil {
+				return fmt.Errorf(
+					"set multiplier: %w",
+					err,
+				)
+			}
+
 			log.Printf(
 				"round #%d: multiplier = %sx",
 				round.RoundNumber,
-				multiplier.StringFixed(2),
+				multiplierValue.StringFixed(4),
 			)
 
-			// Temporary multiplier increase.
-			//
-			// This is NOT the final production
-			// multiplier formula.
-			multiplier = multiplier.Add(
+			multiplierValue = multiplierValue.Add(
 				decimal.NewFromFloat(0.01),
 			)
 		}
 	}
 }
 
-// waitFor waits for a duration while still respecting
-// context cancellation.
 func waitFor(
 	ctx context.Context,
 	duration time.Duration,

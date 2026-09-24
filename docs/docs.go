@@ -101,6 +101,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/bets": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Places one of the user's bets in an open game round.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "betting"
+                ],
+                "summary": "Place a bet",
+                "parameters": [
+                    {
+                        "description": "Bet details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/betting.PlaceBetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request or bet",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/game/rounds": {
             "post": {
                 "description": "Creates a new game round when no other round is active.",
@@ -405,6 +457,44 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/settlement/rounds/{id}/settle": {
+            "post": {
+                "description": "Marks a crashed round as settled and resolves any active bets.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settlement"
+                ],
+                "summary": "Settle game round",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Round ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/settlement.Result"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/wallet/balance": {
             "get": {
                 "security": [
@@ -551,6 +641,20 @@ const docTemplate = `{
                 }
             }
         },
+        "betting.PlaceBetRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string"
+                },
+                "bet_number": {
+                    "type": "integer"
+                },
+                "round_id": {
+                    "type": "integer"
+                }
+            }
+        },
         "game.GameRound": {
             "type": "object",
             "properties": {
@@ -607,6 +711,21 @@ const docTemplate = `{
                 "RoundCrashed",
                 "RoundSettled"
             ]
+        },
+        "settlement.Result": {
+            "type": "object",
+            "properties": {
+                "alreadySettled": {
+                    "type": "boolean"
+                },
+                "lostBets": {
+                    "type": "integer"
+                },
+                "roundID": {
+                    "type": "integer",
+                    "format": "int64"
+                }
+            }
         },
         "wallet.BalanceResponse": {
             "type": "object",

@@ -3,10 +3,14 @@ package main
 import (
 	_ "aviator/backend/docs"
 	"aviator/backend/internal/auth"
+	"aviator/backend/internal/betting"
+	"aviator/backend/internal/cashout"
 	"aviator/backend/internal/config"
 	"aviator/backend/internal/database"
 	"aviator/backend/internal/fairness"
 	"aviator/backend/internal/game"
+	"aviator/backend/internal/multiplier"
+	"aviator/backend/internal/settlement"
 	"aviator/backend/internal/wallet"
 	"context"
 	"log"
@@ -42,11 +46,15 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	// ============================================================
 	// Configuration
+	// ============================================================
 
 	cfg := config.Load()
 
+	// ============================================================
 	// PostgreSQL
+	// ============================================================
 
 	db, err := database.NewPostgres(cfg.DatabaseURL)
 	if err != nil {
@@ -57,7 +65,9 @@ func main() {
 
 	log.Println("Connected to PostgreSQL")
 
+	// ============================================================
 	// Fairness
+	// ============================================================
 
 	houseEdge, err := decimal.NewFromString(cfg.HouseEdge)
 	if err != nil {
@@ -70,9 +80,14 @@ func main() {
 		},
 	)
 
-	log.Printf("Fairness service initialized with house edge: %s", houseEdge.String())
+	log.Printf(
+		"Fairness service initialized with house edge: %s",
+		houseEdge.String(),
+	)
 
+	// ============================================================
 	// Authentication
+	// ============================================================
 
 	authService := auth.NewService(
 		db,
@@ -81,12 +96,60 @@ func main() {
 
 	authHandler := auth.NewHandler(authService)
 
+	// ============================================================
 	// Wallet
+	// ============================================================
 
 	walletRepository := wallet.NewRepository(db)
-	walletHandler := wallet.NewHandler(walletRepository)
 
+	walletService := wallet.NewService(db)
+
+	walletHandler := wallet.NewHandler(
+		walletRepository,
+	)
+
+	// ============================================================
+	// Betting
+	// ============================================================
+
+	bettingRepository := betting.NewRepository(db)
+
+	bettingService := betting.NewService(
+		db,
+		bettingRepository,
+		walletService,
+	)
+
+	bettingHandler := betting.NewHandler(
+		bettingService,
+	)
+
+	// ============================================================
+	// Multiplier
+	// ============================================================
+
+	multiplierService := multiplier.NewService()
+
+	// ============================================================
+	// Cashout
+	// ============================================================
+
+	cashoutRepository := cashout.NewRepository(db)
+
+	cashoutService := cashout.NewService(
+		db,
+		cashoutRepository,
+		walletService,
+		multiplierService,
+	)
+
+	cashoutHandler := cashout.NewHandler(
+		cashoutService,
+	)
+
+	// ============================================================
 	// Game
+	// ============================================================
 
 	gameRepository := game.NewRepository(db)
 
@@ -95,29 +158,61 @@ func main() {
 		fairnessService,
 	)
 
-	gameHandler := game.NewHandler(gameService)
+	gameHandler := game.NewHandler(
+		gameService,
+	)
 
+	// ============================================================
+	// Settlement
+	// ============================================================
+
+	settlementRepository := settlement.NewRepository(db)
+
+	settlementService := settlement.NewService(
+		db,
+		settlementRepository,
+	)
+
+	settlementHandler := settlement.NewHandler(
+		settlementService,
+	)
+
+	// ============================================================
 	// Game Engine
+	// ============================================================
 
-	gameEngine := game.NewEngine(gameService)
+	gameEngine := game.NewEngine(
+		gameService,
+		multiplierService,
+		settlementService,
+	)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(
+		context.Background(),
+	)
+
 	defer cancel()
 
 	go gameEngine.Run(ctx)
 
+	// ============================================================
 	// Router
+	// ============================================================
 
 	mux := http.NewServeMux()
 
+	// ============================================================
 	// Health
+	// ============================================================
 
 	mux.HandleFunc(
 		"/health",
 		healthHandler,
 	)
 
+	// ============================================================
 	// Authentication
+	// ============================================================
 
 	mux.HandleFunc(
 		"/api/auth/register",
@@ -129,16 +224,69 @@ func main() {
 		authHandler.Login,
 	)
 
+	// ============================================================
 	// Protected Wallet Routes
+	// ============================================================
 
 	mux.Handle(
 		"/api/wallet/balance",
 		authService.Middleware(
-			http.HandlerFunc(walletHandler.GetBalance),
+			http.HandlerFunc(
+				walletHandler.GetBalance,
+			),
 		),
 	)
 
+	// ============================================================
+	// Protected Betting Routes
+	// ============================================================
+
+	mux.Handle(
+		"/api/bets",
+		authService.Middleware(
+			http.HandlerFunc(
+				bettingHandler.PlaceBet,
+			),
+		),
+	)
+
+	// ============================================================
+	// Protected Cashout Route
+	// ============================================================
+
+	mux.Handle(
+		"/api/bets/",
+		authService.Middleware(
+			http.HandlerFunc(
+				cashoutHandler.CashOut,
+			),
+		),
+	)
+
+	// ============================================================
+	// Settlement Routes
+	// ============================================================
+
+	mux.HandleFunc(
+		"/api/settlement/rounds/",
+		func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodPost:
+				switch {
+				case hasSuffix(r.URL.Path, "/settle"):
+					settlementHandler.SettleRound(w, r)
+				default:
+					http.NotFound(w, r)
+				}
+			default:
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		},
+	)
+
+	// ============================================================
 	// Game Routes
+	// ============================================================
 
 	mux.HandleFunc(
 		"/api/game/rounds",
@@ -156,31 +304,51 @@ func main() {
 			switch r.Method {
 
 			case http.MethodGet:
+
 				gameHandler.GetRound(w, r)
 
 			case http.MethodPost:
 
 				switch {
-				case hasSuffix(r.URL.Path, "/open"):
+				case hasSuffix(
+					r.URL.Path,
+					"/open",
+				):
 					gameHandler.OpenBetting(w, r)
 
-				case hasSuffix(r.URL.Path, "/close"):
+				case hasSuffix(
+					r.URL.Path,
+					"/close",
+				):
 					gameHandler.CloseBetting(w, r)
 
-				case hasSuffix(r.URL.Path, "/start"):
+				case hasSuffix(
+					r.URL.Path,
+					"/start",
+				):
 					gameHandler.StartRound(w, r)
 
-				case hasSuffix(r.URL.Path, "/crash"):
+				case hasSuffix(
+					r.URL.Path,
+					"/crash",
+				):
 					gameHandler.CrashRound(w, r)
 
-				case hasSuffix(r.URL.Path, "/settle"):
+				case hasSuffix(
+					r.URL.Path,
+					"/settle",
+				):
 					gameHandler.SettleRound(w, r)
 
 				default:
-					http.NotFound(w, r)
+					http.NotFound(
+						w,
+						r,
+					)
 				}
 
 			default:
+
 				http.Error(
 					w,
 					"method not allowed",
@@ -189,14 +357,19 @@ func main() {
 			}
 		},
 	)
+
+	// ============================================================
 	// Swagger
+	// ============================================================
 
 	mux.Handle(
 		"/swagger/",
 		httpSwagger.WrapHandler,
 	)
 
+	// ============================================================
 	// Start Server
+	// ============================================================
 
 	addr := ":" + cfg.AppPort
 
@@ -205,7 +378,10 @@ func main() {
 		addr,
 	)
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := http.ListenAndServe(
+		addr,
+		mux,
+	); err != nil {
 		log.Fatal(err)
 	}
 }

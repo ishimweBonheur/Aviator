@@ -58,6 +58,15 @@ definitions:
       username:
         type: string
     type: object
+  betting.PlaceBetRequest:
+    properties:
+      amount:
+        type: string
+      bet_number:
+        type: integer
+      round_id:
+        type: integer
+    type: object
   game.GameRound:
     properties:
       client_seed:
@@ -99,6 +108,16 @@ definitions:
     - RoundRunning
     - RoundCrashed
     - RoundSettled
+  settlement.Result:
+    properties:
+      alreadySettled:
+        type: boolean
+      lostBets:
+        type: integer
+      roundID:
+        format: int64
+        type: integer
+    type: object
   wallet.BalanceResponse:
     properties:
       balance:
@@ -172,6 +191,39 @@ paths:
       summary: Register a user
       tags:
       - auth
+  /api/bets:
+    post:
+      consumes:
+      - application/json
+      description: Places one of the user's bets in an open game round.
+      parameters:
+      - description: Bet details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/betting.PlaceBetRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request or bet
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Place a bet
+      tags:
+      - betting
   /api/game/rounds:
     post:
       description: Creates a new game round when no other round is active.
@@ -372,6 +424,31 @@ paths:
       summary: Get current game round
       tags:
       - game
+  /api/settlement/rounds/{id}/settle:
+    post:
+      description: Marks a crashed round as settled and resolves any active bets.
+      parameters:
+      - description: Round ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/settlement.Result'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Settle game round
+      tags:
+      - settlement
   /api/wallet/balance:
     get:
       description: Returns the current wallet balance for the authenticated user.
