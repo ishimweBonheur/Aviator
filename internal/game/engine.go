@@ -8,8 +8,6 @@ import (
 	"log"
 	"sync"
 	"time"
-
-	"github.com/shopspring/decimal"
 )
 
 type Engine struct {
@@ -64,34 +62,215 @@ func (e *Engine) Run(ctx context.Context) {
 			return
 
 		default:
-			if err := e.runRound(ctx); err != nil {
-				log.Printf(
-					"game round error: %v",
-					err,
-				)
+		}
 
-				select {
-				case <-ctx.Done():
-					return
+		if err := e.runContinuous(ctx); err != nil {
+			log.Printf(
+				"game engine error: %v",
+				err,
+			)
 
-				case <-time.After(2 * time.Second):
-				}
+			select {
+			case <-ctx.Done():
+				return
+
+			case <-time.After(2 * time.Second):
 			}
 		}
 	}
 }
 
-func (e *Engine) runRound(
+func (e *Engine) runContinuous(
 	ctx context.Context,
 ) error {
-
 	// ============================================================
-	// CREATE
+	// ENSURE CURRENT RUNNING ROUND
 	// ============================================================
 
-	round, err := e.service.CreateRound(ctx)
+	runningRound, err := e.service.repository.GetRunningRound(ctx)
 	if err != nil {
 		return fmt.Errorf(
+			"get running round: %w",
+			err,
+		)
+	}
+
+	// ============================================================
+	// ENSURE UPCOMING BETTING ROUND
+	// ============================================================
+
+	bettingRound, err := e.service.repository.GetBettingRound(ctx)
+	if err != nil {
+		return fmt.Errorf(
+			"get betting round: %w",
+			err,
+		)
+	}
+
+	// ------------------------------------------------------------
+	// No running round yet.
+	// ------------------------------------------------------------
+
+	if runningRound == nil {
+		if bettingRound == nil {
+			bettingRound, err = e.createAndOpenRound(ctx)
+			if err != nil {
+				return err
+			}
+
+			log.Printf(
+				"round #%d: initial betting opened",
+				bettingRound.RoundNumber,
+			)
+
+			if err := waitFor(
+				ctx,
+				5*time.Second,
+			); err != nil {
+				return err
+			}
+		}
+
+		if bettingRound.Status == RoundBettingOpen {
+			bettingRound, err = e.prepareRoundForRunning(
+				ctx,
+				bettingRound,
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		runningRound = bettingRound
+
+		// Create the next betting round immediately.
+		if _, err := e.ensureBettingRound(ctx); err != nil {
+			return err
+		}
+	}
+
+	// ------------------------------------------------------------
+	// A running round already exists.
+	// Make sure another round is accepting bets.
+	// ------------------------------------------------------------
+
+	if _, err := e.ensureBettingRound(ctx); err != nil {
+		return err
+	}
+
+	// ============================================================
+	// RUN CURRENT ROUND
+	// ============================================================
+
+	if err := e.runMultiplier(
+		ctx,
+		runningRound,
+	); err != nil {
+		e.multiplierService.Stop(runningRound.ID)
+
+		return fmt.Errorf(
+			"multiplier loop: %w",
+			err,
+		)
+	}
+
+	e.multiplierService.Stop(runningRound.ID)
+
+	// ============================================================
+	// CRASH CURRENT ROUND
+	// ============================================================
+
+	round, err := e.service.CrashRound(
+		ctx,
+		runningRound.ID,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"crash round: %w",
+			err,
+		)
+	}
+
+	log.Printf(
+		"round #%d: crashed at %sx",
+		round.RoundNumber,
+		round.CrashPoint.StringFixed(4),
+	)
+
+	// ============================================================
+	// SETTLE CURRENT ROUND
+	// ============================================================
+
+	result, err := e.settlementService.SettleRound(
+		ctx,
+		round.ID,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"settle round: %w",
+			err,
+		)
+	}
+
+	e.multiplierService.Remove(round.ID)
+
+	log.Printf(
+		"round #%d: settled, %d bets lost",
+		round.RoundNumber,
+		result.LostBets,
+	)
+
+	// ============================================================
+	// PROMOTE UPCOMING ROUND
+	// ============================================================
+
+	nextRound, err := e.service.repository.GetBettingRound(ctx)
+	if err != nil {
+		return fmt.Errorf(
+			"get next betting round: %w",
+			err,
+		)
+	}
+
+	if nextRound == nil {
+		return fmt.Errorf(
+			"no upcoming betting round exists after round #%d",
+			round.RoundNumber,
+		)
+	}
+
+	nextRound, err = e.prepareRoundForRunning(
+		ctx,
+		nextRound,
+	)
+	if err != nil {
+		return err
+	}
+
+	log.Printf(
+		"round #%d: now running",
+		nextRound.RoundNumber,
+	)
+
+	// ============================================================
+	// CREATE NEXT BETTING ROUND
+	// ============================================================
+
+	if _, err := e.ensureBettingRound(ctx); err != nil {
+		return err
+	}
+
+	// The next invocation of runContinuous
+	// will run the newly promoted round.
+	return nil
+}
+
+func (e *Engine) createAndOpenRound(
+	ctx context.Context,
+) (*GameRound, error) {
+	round, err := e.service.CreateRound(ctx)
+	if err != nil {
+		return nil, fmt.Errorf(
 			"create round: %w",
 			err,
 		)
@@ -102,19 +281,38 @@ func (e *Engine) runRound(
 		round.RoundNumber,
 	)
 
-	// ============================================================
-	// OPEN BETTING
-	// ============================================================
-
 	round, err = e.service.OpenBetting(
 		ctx,
 		round.ID,
 	)
 	if err != nil {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"open betting: %w",
 			err,
 		)
+	}
+
+	return round, nil
+}
+
+func (e *Engine) ensureBettingRound(
+	ctx context.Context,
+) (*GameRound, error) {
+	round, err := e.service.repository.GetBettingRound(ctx)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get betting round: %w",
+			err,
+		)
+	}
+
+	if round != nil {
+		return round, nil
+	}
+
+	round, err = e.createAndOpenRound(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	log.Printf(
@@ -122,25 +320,33 @@ func (e *Engine) runRound(
 		round.RoundNumber,
 	)
 
-	// Give players time to place bets.
-	if err := waitFor(
-		ctx,
-		5*time.Second,
-	); err != nil {
-		return err
+	return round, nil
+}
+
+func (e *Engine) prepareRoundForRunning(
+	ctx context.Context,
+	round *GameRound,
+) (*GameRound, error) {
+	if round.Status != RoundBettingOpen {
+		return nil, fmt.Errorf(
+			"round #%d cannot be promoted from status %s",
+			round.RoundNumber,
+			round.Status,
+		)
 	}
 
 	// ============================================================
 	// CLOSE BETTING
 	// ============================================================
 
-	round, err = e.service.CloseBetting(
+	round, err := e.service.CloseBetting(
 		ctx,
 		round.ID,
 	)
 	if err != nil {
-		return fmt.Errorf(
-			"close betting: %w",
+		return nil, fmt.Errorf(
+			"close betting for round #%d: %w",
+			round.RoundNumber,
 			err,
 		)
 	}
@@ -159,14 +365,15 @@ func (e *Engine) runRound(
 		round.ID,
 	)
 	if err != nil {
-		return fmt.Errorf(
-			"generate crash point: %w",
+		return nil, fmt.Errorf(
+			"generate crash point for round #%d: %w",
+			round.RoundNumber,
 			err,
 		)
 	}
 
 	if round.CrashPoint == nil {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"round #%d has no crash point",
 			round.RoundNumber,
 		)
@@ -187,93 +394,53 @@ func (e *Engine) runRound(
 		round.ID,
 	)
 	if err != nil {
-		return fmt.Errorf(
-			"start round: %w",
+		return nil, fmt.Errorf(
+			"start round #%d: %w",
+			round.RoundNumber,
 			err,
 		)
 	}
 
-	log.Printf(
-		"round #%d: running",
-		round.RoundNumber,
-	)
-
-	// ============================================================
-	// RUN MULTIPLIER
-	// ============================================================
-
-	if err := e.runMultiplier(
-		ctx,
-		round,
-	); err != nil {
-
-		// Make sure the in-memory multiplier state
-		// does not remain running if the engine stops
-		// unexpectedly.
-		e.multiplierService.Stop(round.ID)
-
-		return fmt.Errorf(
-			"multiplier loop: %w",
-			err,
-		)
-	}
-
-	// The multiplier has reached the crash point.
-	e.multiplierService.Stop(round.ID)
-
-	// ============================================================
-	// CRASH ROUND
-	// ============================================================
-
-	round, err = e.service.CrashRound(
-		ctx,
-		round.ID,
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"crash round: %w",
-			err,
-		)
-	}
-
-	log.Printf(
-		"round #%d: crashed at %sx",
-		round.RoundNumber,
-		round.CrashPoint.StringFixed(4),
-	)
-
-	// ============================================================
-	// SETTLEMENT
-	// ============================================================
-
-	result, err := e.settlementService.SettleRound(
-		ctx,
-		round.ID,
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"settle round: %w",
-			err,
-		)
-	}
-
-	// Remove the multiplier state only after
-	// the round has been successfully settled.
-	e.multiplierService.Remove(round.ID)
-
-	log.Printf(
-		"round #%d: settled, %d bets lost",
-		round.RoundNumber,
-		result.LostBets,
-	)
-
-	return nil
+	return round, nil
 }
+
+// ================================================================
+// TIME-BASED MULTIPLIER
+// ================================================================
+//
+// The multiplier is now determined by:
+//
+//     elapsed time since StartedAt
+//                    ↓
+//             growth function
+//
+// The ticker only controls how frequently we check the value.
+// It no longer controls the multiplier itself.
+//
+// This means:
+//
+//     1.00x -> 1.01x -> 1.02x
+//
+// is NOT caused by:
+//
+//     ticker -> +0.01
+//
+// Instead:
+//
+//     StartedAt + current time -> multiplier
+//
+// ================================================================
 
 func (e *Engine) runMultiplier(
 	ctx context.Context,
 	round *GameRound,
 ) error {
+	if round.StartedAt == nil {
+		return fmt.Errorf(
+			"round #%d has no started_at",
+			round.RoundNumber,
+		)
+	}
 
 	if round.CrashPoint == nil {
 		return fmt.Errorf(
@@ -282,10 +449,12 @@ func (e *Engine) runMultiplier(
 		)
 	}
 
-	// Start the live multiplier state.
-	e.multiplierService.Start(round.ID)
+	e.multiplierService.Start(
+		round.ID,
+		*round.StartedAt,
+	)
 
-	multiplierValue := decimal.NewFromInt(1)
+	defer e.multiplierService.Stop(round.ID)
 
 	ticker := time.NewTicker(
 		100 * time.Millisecond,
@@ -295,32 +464,25 @@ func (e *Engine) runMultiplier(
 
 	for {
 		select {
-
 		case <-ctx.Done():
 			return ctx.Err()
 
-		case <-ticker.C:
+		case now := <-ticker.C:
 
-			// Check whether we have reached
-			// the predetermined crash point.
-			if multiplierValue.GreaterThanOrEqual(
-				*round.CrashPoint,
-			) {
+			current := multiplier.Calculate(
+				*round.StartedAt,
+				now,
+			)
 
-				log.Printf(
-					"round #%d: crash reached at %sx",
-					round.RoundNumber,
-					multiplierValue.StringFixed(4),
-				)
-
-				return nil
+			// Never expose a multiplier above the
+			// authoritative crash point.
+			if current.GreaterThan(*round.CrashPoint) {
+				current = *round.CrashPoint
 			}
 
-			// Publish the current multiplier
-			// to the in-memory multiplier service.
 			if err := e.multiplierService.Set(
 				round.ID,
-				multiplierValue,
+				current,
 			); err != nil {
 				return fmt.Errorf(
 					"set multiplier: %w",
@@ -331,12 +493,20 @@ func (e *Engine) runMultiplier(
 			log.Printf(
 				"round #%d: multiplier = %sx",
 				round.RoundNumber,
-				multiplierValue.StringFixed(4),
+				current.StringFixed(2),
 			)
 
-			multiplierValue = multiplierValue.Add(
-				decimal.NewFromFloat(0.01),
-			)
+			if current.GreaterThanOrEqual(
+				*round.CrashPoint,
+			) {
+				log.Printf(
+					"round #%d: crash reached at %sx",
+					round.RoundNumber,
+					current.StringFixed(2),
+				)
+
+				return nil
+			}
 		}
 	}
 }
@@ -345,12 +515,10 @@ func waitFor(
 	ctx context.Context,
 	duration time.Duration,
 ) error {
-
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
 
 	select {
-
 	case <-ctx.Done():
 		return ctx.Err()
 

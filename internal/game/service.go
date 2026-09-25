@@ -15,7 +15,10 @@ type Service struct {
 	fairnessService *fairness.Service
 }
 
-func NewService(repository *Repository, fairnessService *fairness.Service) *Service {
+func NewService(
+	repository *Repository,
+	fairnessService *fairness.Service,
+) *Service {
 	return &Service{
 		repository:      repository,
 		fairnessService: fairnessService,
@@ -23,15 +26,16 @@ func NewService(repository *Repository, fairnessService *fairness.Service) *Serv
 }
 
 func (s *Service) CreateRound(ctx context.Context) (*GameRound, error) {
-	currentRound, err := s.repository.GetCurrentRound(ctx)
+	// There can be only one upcoming betting round.
+	bettingRound, err := s.repository.GetBettingRound(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	if currentRound != nil {
+	if bettingRound != nil {
 		return nil, fmt.Errorf(
-			"cannot create a new round while round %d is still active",
-			currentRound.RoundNumber,
+			"cannot create a new round while round %d is already open for betting",
+			bettingRound.RoundNumber,
 		)
 	}
 
@@ -42,7 +46,10 @@ func (s *Service) CreateRound(ctx context.Context) (*GameRound, error) {
 
 	serverSeed, err := generateSeed()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate server seed: %w", err)
+		return nil, fmt.Errorf(
+			"failed to generate server seed: %w",
+			err,
+		)
 	}
 
 	serverSeedHash := hashSeed(serverSeed)
@@ -183,26 +190,10 @@ func (s *Service) SettleRound(
 	return s.repository.GetRoundByID(ctx, roundID)
 }
 
-func generateSeed() (string, error) {
-	bytes := make([]byte, 32)
-
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(bytes), nil
-}
-
-func hashSeed(seed string) string {
-	hash := sha256.Sum256([]byte(seed))
-
-	return hex.EncodeToString(hash[:])
-}
 func (s *Service) GenerateCrashPoint(
 	ctx context.Context,
 	roundID int64,
 ) (*GameRound, error) {
-
 	round, err := s.repository.GetRoundByID(ctx, roundID)
 	if err != nil {
 		return nil, err
@@ -244,4 +235,20 @@ func (s *Service) GenerateCrashPoint(
 	}
 
 	return round, nil
+}
+
+func generateSeed() (string, error) {
+	bytes := make([]byte, 32)
+
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(bytes), nil
+}
+
+func hashSeed(seed string) string {
+	hash := sha256.Sum256([]byte(seed))
+
+	return hex.EncodeToString(hash[:])
 }

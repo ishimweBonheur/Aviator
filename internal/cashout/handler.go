@@ -18,13 +18,39 @@ func NewHandler(service *Service) *Handler {
 	}
 }
 
+// CashOut godoc
+// @Summary Cash out a bet
+// @Description Cashes out an active bet using the current server-side multiplier.
+// @Tags cashout
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param bet_id path int true "Bet ID"
+// @Success 200 {object} CashoutResponse
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Router /api/bets/{bet_id} [post]
 func (h *Handler) CashOut(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
+	// Only POST is allowed.
+	if r.Method != http.MethodPost {
+		http.Error(
+			w,
+			"method not allowed",
+			http.StatusMethodNotAllowed,
+		)
+		return
+	}
+
+	// Get authenticated user.
 	userID, ok := auth.UserIDFromContext(
 		r.Context(),
 	)
+
 	if !ok {
 		http.Error(
 			w,
@@ -34,24 +60,29 @@ func (h *Handler) CashOut(
 		return
 	}
 
+	// Expected:
+	// /api/bets/{bet_id}
 	parts := strings.Split(
 		strings.Trim(r.URL.Path, "/"),
 		"/",
 	)
 
-	if len(parts) != 3 || parts[0] != "api" ||
+	if len(parts) != 3 ||
+		parts[0] != "api" ||
 		parts[1] != "bets" ||
 		parts[2] == "" {
 		http.NotFound(w, r)
 		return
 	}
 
+	// Parse bet ID.
 	betID, err := strconv.ParseInt(
 		parts[2],
 		10,
 		64,
 	)
-	if err != nil {
+
+	if err != nil || betID <= 0 {
 		http.Error(
 			w,
 			"invalid bet ID",
@@ -60,11 +91,13 @@ func (h *Handler) CashOut(
 		return
 	}
 
+	// Perform server-side cashout.
 	result, err := h.service.CashOut(
 		r.Context(),
 		userID,
 		betID,
 	)
+
 	if err != nil {
 		http.Error(
 			w,
@@ -79,5 +112,9 @@ func (h *Handler) CashOut(
 		"application/json",
 	)
 
-	json.NewEncoder(w).Encode(result)
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		return
+	}
 }

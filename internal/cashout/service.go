@@ -52,7 +52,7 @@ func (s *Service) CashOut(
 		)
 	}
 
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	bet, err := s.repository.GetActiveBetForUpdate(
 		ctx,
@@ -85,13 +85,13 @@ func (s *Service) CashOut(
 		)
 	}
 
-	currentMultiplier, exists := s.multiplierService.Current(
+	currentMultiplier, err := s.multiplierService.Current(
 		bet.RoundID,
 	)
-
-	if !exists {
+	if err != nil {
 		return nil, fmt.Errorf(
-			"multiplier is not currently running",
+			"multiplier is not currently running: %w",
+			err,
 		)
 	}
 

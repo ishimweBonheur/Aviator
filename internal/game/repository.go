@@ -19,7 +19,9 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	}
 }
 
-func (r *Repository) GetNextRoundNumber(ctx context.Context) (int64, error) {
+func (r *Repository) GetNextRoundNumber(
+	ctx context.Context,
+) (int64, error) {
 	var roundNumber int64
 
 	err := r.db.QueryRow(ctx, `
@@ -28,7 +30,10 @@ func (r *Repository) GetNextRoundNumber(ctx context.Context) (int64, error) {
 	`).Scan(&roundNumber)
 
 	if err != nil {
-		return 0, fmt.Errorf("failed to get next round number: %w", err)
+		return 0, fmt.Errorf(
+			"failed to get next round number: %w",
+			err,
+		)
 	}
 
 	return roundNumber, nil
@@ -88,7 +93,10 @@ func (r *Repository) CreateRound(
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to create game round: %w", err)
+		return nil, fmt.Errorf(
+			"failed to create game round: %w",
+			err,
+		)
 	}
 
 	return &round, nil
@@ -131,10 +139,86 @@ func (r *Repository) GetRoundByID(
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("round %d not found", id)
+			return nil, fmt.Errorf(
+				"round %d not found",
+				id,
+			)
 		}
 
-		return nil, fmt.Errorf("failed to get round: %w", err)
+		return nil, fmt.Errorf(
+			"failed to get round: %w",
+			err,
+		)
+	}
+
+	return &round, nil
+}
+
+func (r *Repository) GetRunningRound(
+	ctx context.Context,
+) (*GameRound, error) {
+	return r.getRoundByStatus(
+		ctx,
+		RoundRunning,
+	)
+}
+
+func (r *Repository) GetBettingRound(
+	ctx context.Context,
+) (*GameRound, error) {
+	return r.getRoundByStatus(
+		ctx,
+		RoundBettingOpen,
+	)
+}
+
+func (r *Repository) getRoundByStatus(
+	ctx context.Context,
+	status RoundStatus,
+) (*GameRound, error) {
+	var round GameRound
+
+	err := r.db.QueryRow(ctx, `
+		SELECT
+			id,
+			round_number,
+			server_seed_hash,
+			server_seed,
+			client_seed,
+			nonce,
+			crash_point,
+			status,
+			started_at,
+			ended_at,
+			created_at
+		FROM game_rounds
+		WHERE status = $1
+		ORDER BY round_number DESC
+		LIMIT 1
+	`, status).Scan(
+		&round.ID,
+		&round.RoundNumber,
+		&round.ServerSeedHash,
+		&round.ServerSeed,
+		&round.ClientSeed,
+		&round.Nonce,
+		&round.CrashPoint,
+		&round.Status,
+		&round.StartedAt,
+		&round.EndedAt,
+		&round.CreatedAt,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf(
+			"failed to get round with status %s: %w",
+			status,
+			err,
+		)
 	}
 
 	return &round, nil
@@ -186,7 +270,10 @@ func (r *Repository) GetCurrentRound(
 			return nil, nil
 		}
 
-		return nil, fmt.Errorf("failed to get current round: %w", err)
+		return nil, fmt.Errorf(
+			"failed to get current round: %w",
+			err,
+		)
 	}
 
 	return &round, nil
@@ -207,11 +294,17 @@ func (r *Repository) UpdateStatus(
 	)
 
 	if err != nil {
-		return fmt.Errorf("failed to update round status: %w", err)
+		return fmt.Errorf(
+			"failed to update round status: %w",
+			err,
+		)
 	}
 
 	if commandTag.RowsAffected() == 0 {
-		return fmt.Errorf("round %d not found", id)
+		return fmt.Errorf(
+			"round %d not found",
+			id,
+		)
 	}
 
 	return nil
@@ -233,11 +326,17 @@ func (r *Repository) StartRound(
 	)
 
 	if err != nil {
-		return fmt.Errorf("failed to start round: %w", err)
+		return fmt.Errorf(
+			"failed to start round: %w",
+			err,
+		)
 	}
 
 	if commandTag.RowsAffected() == 0 {
-		return fmt.Errorf("round %d not found", id)
+		return fmt.Errorf(
+			"round %d not found",
+			id,
+		)
 	}
 
 	return nil
@@ -259,11 +358,17 @@ func (r *Repository) CrashRound(
 	)
 
 	if err != nil {
-		return fmt.Errorf("failed to crash round: %w", err)
+		return fmt.Errorf(
+			"failed to crash round: %w",
+			err,
+		)
 	}
 
 	if commandTag.RowsAffected() == 0 {
-		return fmt.Errorf("round %d not found", id)
+		return fmt.Errorf(
+			"round %d not found",
+			id,
+		)
 	}
 
 	return nil
@@ -283,23 +388,28 @@ func (r *Repository) SettleRound(
 	)
 
 	if err != nil {
-		return fmt.Errorf("failed to settle round: %w", err)
+		return fmt.Errorf(
+			"failed to settle round: %w",
+			err,
+		)
 	}
 
 	if commandTag.RowsAffected() == 0 {
-		return fmt.Errorf("round %d not found", id)
+		return fmt.Errorf(
+			"round %d not found",
+			id,
+		)
 	}
 
 	return nil
 }
+
 func (r *Repository) SetCrashPoint(
 	ctx context.Context,
 	id int64,
 	crashPoint decimal.Decimal,
 ) (*GameRound, error) {
-
 	var round GameRound
-
 	var crashPointString string
 
 	err := r.db.QueryRow(
@@ -344,7 +454,9 @@ func (r *Repository) SetCrashPoint(
 		)
 	}
 
-	parsedCrashPoint, err := decimal.NewFromString(crashPointString)
+	parsedCrashPoint, err := decimal.NewFromString(
+		crashPointString,
+	)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"invalid crash point in database: %w",

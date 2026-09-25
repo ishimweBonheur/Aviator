@@ -2,7 +2,9 @@ package multiplier
 
 import (
 	"fmt"
+	"math"
 	"sync"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -18,18 +20,39 @@ func NewService() *Service {
 	}
 }
 
-func (s *Service) Start(roundID int64) {
+func (s *Service) Start(roundID int64, startedAt time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.states[roundID] = State{
 		RoundID:    roundID,
-		Multiplier: decimal.NewFromInt(1),
+		Multiplier: decimal.NewFromFloat(1.0),
 		Running:    true,
+		StartedAt:  startedAt,
 	}
 }
 
+func (s *Service) Current(roundID int64) (decimal.Decimal, error) {
+	s.mu.RLock()
+	state, exists := s.states[roundID]
+	s.mu.RUnlock()
+
+	if !exists {
+		return decimal.Zero, fmt.Errorf("multiplier state not found for round %d", roundID)
+	}
+
+	if !state.Running {
+		return decimal.Zero, fmt.Errorf("round %d is not running", roundID)
+	}
+
+	return Calculate(state.StartedAt, time.Now()), nil
+}
+
 func (s *Service) Set(roundID int64, value decimal.Decimal) error {
+	if value.LessThan(decimal.NewFromInt(1)) {
+		return fmt.Errorf("multiplier cannot be below 1.00")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -38,26 +61,10 @@ func (s *Service) Set(roundID int64, value decimal.Decimal) error {
 		return fmt.Errorf("multiplier state not found for round %d", roundID)
 	}
 
-	if !value.GreaterThanOrEqual(decimal.NewFromInt(1)) {
-		return fmt.Errorf("multiplier must be at least 1.00")
-	}
-
 	state.Multiplier = value
 	s.states[roundID] = state
 
 	return nil
-}
-
-func (s *Service) Current(roundID int64) (decimal.Decimal, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	state, exists := s.states[roundID]
-	if !exists || !state.Running {
-		return decimal.Zero, false
-	}
-
-	return state.Multiplier, true
 }
 
 func (s *Service) Stop(roundID int64) {
@@ -78,4 +85,28 @@ func (s *Service) Remove(roundID int64) {
 	defer s.mu.Unlock()
 
 	delete(s.states, roundID)
+}
+
+// Calculate returns the multiplier for a specific point in time.
+//
+// This is intentionally deterministic:
+// the same start time and current time produce the same multiplier.
+//
+// The growth curve is:
+//
+//	multiplier = e^(growthRate * elapsedSeconds)
+//
+// The exact growth rate is a gameplay parameter and can be tuned later.
+func Calculate(startedAt, now time.Time) decimal.Decimal {
+	elapsed := now.Sub(startedAt).Seconds()
+
+	if elapsed <= 0 {
+		return decimal.NewFromFloat(1.0)
+	}
+
+	const growthRate = 0.08
+
+	multiplier := math.Exp(growthRate * elapsed)
+
+	return decimal.NewFromFloat(multiplier).Round(2)
 }
