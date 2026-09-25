@@ -7,11 +7,14 @@ import (
 	"aviator/backend/internal/cashout"
 	"aviator/backend/internal/config"
 	"aviator/backend/internal/database"
+	"aviator/backend/internal/deposit"
 	"aviator/backend/internal/fairness"
 	"aviator/backend/internal/game"
 	"aviator/backend/internal/multiplier"
+	"aviator/backend/internal/realtime"
 	"aviator/backend/internal/settlement"
 	"aviator/backend/internal/wallet"
+	withdrawal "aviator/backend/internal/withdraw"
 	"context"
 	"log"
 	"net/http"
@@ -29,7 +32,7 @@ import (
 // @securityDefinitions.apikey BearerAuth
 // @in header
 // @name Authorization
-// @description Enter your JWT token. Swagger UI will send it as "Bearer <token>".
+// @description Enter "Bearer" followed by a space and your JWT token.
 
 // @Summary Health check
 // @Description Returns the current health status of the backend.
@@ -37,12 +40,29 @@ import (
 // @Produce json
 // @Success 200 {object} map[string]string
 // @Router /health [get]
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+func healthHandler(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if r.Method != http.MethodGet {
+		http.Error(
+			w,
+			"method not allowed",
+			http.StatusMethodNotAllowed,
+		)
+		return
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
 
 	w.WriteHeader(http.StatusOK)
 
-	w.Write([]byte(`{"status":"ok"}`))
+	_, _ = w.Write(
+		[]byte(`{"status":"ok"}`),
+	)
 }
 
 func main() {
@@ -56,9 +76,14 @@ func main() {
 	// PostgreSQL
 	// ============================================================
 
-	db, err := database.NewPostgres(cfg.DatabaseURL)
+	db, err := database.NewPostgres(
+		cfg.DatabaseURL,
+	)
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		log.Fatalf(
+			"failed to connect to database: %v",
+			err,
+		)
 	}
 
 	defer db.Close()
@@ -69,9 +94,14 @@ func main() {
 	// Fairness
 	// ============================================================
 
-	houseEdge, err := decimal.NewFromString(cfg.HouseEdge)
+	houseEdge, err := decimal.NewFromString(
+		cfg.HouseEdge,
+	)
 	if err != nil {
-		log.Fatalf("failed to parse HOUSE_EDGE: %v", err)
+		log.Fatalf(
+			"failed to parse HOUSE_EDGE: %v",
+			err,
+		)
 	}
 
 	fairnessService := fairness.NewService(
@@ -94,25 +124,65 @@ func main() {
 		cfg.JWTSecret,
 	)
 
-	authHandler := auth.NewHandler(authService)
+	authHandler := auth.NewHandler(
+		authService,
+	)
 
 	// ============================================================
 	// Wallet
 	// ============================================================
 
-	walletRepository := wallet.NewRepository(db)
+	walletRepository := wallet.NewRepository(
+		db,
+	)
 
-	walletService := wallet.NewService(db)
+	walletService := wallet.NewService(
+		db,
+	)
 
 	walletHandler := wallet.NewHandler(
 		walletRepository,
 	)
 
 	// ============================================================
+	// Deposits
+	// ============================================================
+
+	depositRepository := deposit.NewRepository(
+		db,
+	)
+
+	depositService := deposit.NewService(
+		depositRepository,
+	)
+
+	depositHandler := deposit.NewHandler(
+		depositService,
+	)
+
+	// ============================================================
+	// Withdrawals
+	// ============================================================
+
+	withdrawalRepository := withdrawal.NewRepository(
+		db,
+	)
+
+	withdrawalService := withdrawal.NewService(
+		withdrawalRepository,
+	)
+
+	withdrawalHandler := withdrawal.NewHandler(
+		withdrawalService,
+	)
+
+	// ============================================================
 	// Betting
 	// ============================================================
 
-	bettingRepository := betting.NewRepository(db)
+	bettingRepository := betting.NewRepository(
+		db,
+	)
 
 	bettingService := betting.NewService(
 		db,
@@ -134,7 +204,9 @@ func main() {
 	// Cashout
 	// ============================================================
 
-	cashoutRepository := cashout.NewRepository(db)
+	cashoutRepository := cashout.NewRepository(
+		db,
+	)
 
 	cashoutService := cashout.NewService(
 		db,
@@ -151,7 +223,9 @@ func main() {
 	// Game
 	// ============================================================
 
-	gameRepository := game.NewRepository(db)
+	gameRepository := game.NewRepository(
+		db,
+	)
 
 	gameService := game.NewService(
 		gameRepository,
@@ -166,7 +240,9 @@ func main() {
 	// Settlement
 	// ============================================================
 
-	settlementRepository := settlement.NewRepository(db)
+	settlementRepository := settlement.NewRepository(
+		db,
+	)
 
 	settlementService := settlement.NewService(
 		db,
@@ -178,6 +254,18 @@ func main() {
 	)
 
 	// ============================================================
+	// Realtime / WebSocket
+	// ============================================================
+
+	realtimeHub := realtime.NewHub()
+
+	defer realtimeHub.Close()
+
+	realtimeHandler := realtime.NewHandler(
+		realtimeHub,
+	)
+
+	// ============================================================
 	// Game Engine
 	// ============================================================
 
@@ -185,6 +273,7 @@ func main() {
 		gameService,
 		multiplierService,
 		settlementService,
+		realtimeHub,
 	)
 
 	ctx, cancel := context.WithCancel(
@@ -200,6 +289,15 @@ func main() {
 	// ============================================================
 
 	mux := http.NewServeMux()
+
+	// ============================================================
+	// WebSocket
+	// ============================================================
+
+	mux.Handle(
+		"GET /ws",
+		realtimeHandler,
+	)
 
 	// ============================================================
 	// Health
@@ -238,6 +336,38 @@ func main() {
 	)
 
 	// ============================================================
+	// Protected Deposit Routes
+	//
+	// POST /api/deposits
+	// GET  /api/deposits
+	// ============================================================
+
+	mux.Handle(
+		"/api/deposits",
+		authService.Middleware(
+			http.HandlerFunc(
+				depositHandler.Handle,
+			),
+		),
+	)
+
+	// ============================================================
+	// Protected Withdrawal Routes
+	//
+	// POST /api/withdrawals
+	// GET  /api/withdrawals
+	// ============================================================
+
+	mux.Handle(
+		"/api/withdrawals",
+		authService.Middleware(
+			http.HandlerFunc(
+				withdrawalHandler.Handle,
+			),
+		),
+	)
+
+	// ============================================================
 	// Protected Betting Routes
 	// ============================================================
 
@@ -252,6 +382,9 @@ func main() {
 
 	// ============================================================
 	// Protected Cashout Route
+	//
+	// Example:
+	// POST /api/bets/123
 	// ============================================================
 
 	mux.Handle(
@@ -269,17 +402,37 @@ func main() {
 
 	mux.HandleFunc(
 		"/api/settlement/rounds/",
-		func(w http.ResponseWriter, r *http.Request) {
+		func(
+			w http.ResponseWriter,
+			r *http.Request,
+		) {
 			switch r.Method {
+
 			case http.MethodPost:
 				switch {
-				case hasSuffix(r.URL.Path, "/settle"):
-					settlementHandler.SettleRound(w, r)
+
+				case hasSuffix(
+					r.URL.Path,
+					"/settle",
+				):
+					settlementHandler.SettleRound(
+						w,
+						r,
+					)
+
 				default:
-					http.NotFound(w, r)
+					http.NotFound(
+						w,
+						r,
+					)
 				}
+
 			default:
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				http.Error(
+					w,
+					"method not allowed",
+					http.StatusMethodNotAllowed,
+				)
 			}
 		},
 	)
@@ -300,45 +453,65 @@ func main() {
 
 	mux.HandleFunc(
 		"/api/game/rounds/",
-		func(w http.ResponseWriter, r *http.Request) {
+		func(
+			w http.ResponseWriter,
+			r *http.Request,
+		) {
 			switch r.Method {
 
 			case http.MethodGet:
-
-				gameHandler.GetRound(w, r)
+				gameHandler.GetRound(
+					w,
+					r,
+				)
 
 			case http.MethodPost:
-
 				switch {
+
 				case hasSuffix(
 					r.URL.Path,
 					"/open",
 				):
-					gameHandler.OpenBetting(w, r)
+					gameHandler.OpenBetting(
+						w,
+						r,
+					)
 
 				case hasSuffix(
 					r.URL.Path,
 					"/close",
 				):
-					gameHandler.CloseBetting(w, r)
+					gameHandler.CloseBetting(
+						w,
+						r,
+					)
 
 				case hasSuffix(
 					r.URL.Path,
 					"/start",
 				):
-					gameHandler.StartRound(w, r)
+					gameHandler.StartRound(
+						w,
+						r,
+					)
 
 				case hasSuffix(
 					r.URL.Path,
 					"/crash",
 				):
-					gameHandler.CrashRound(w, r)
+					gameHandler.CrashRound(
+						w,
+						r,
+					)
 
 				case hasSuffix(
 					r.URL.Path,
 					"/settle",
 				):
-					gameHandler.SettleRound(w, r)
+					gameHandler.SettleRound(
+						w,
+						r,
+					)
 
 				default:
 					http.NotFound(
@@ -348,7 +521,6 @@ func main() {
 				}
 
 			default:
-
 				http.Error(
 					w,
 					"method not allowed",
@@ -386,7 +558,10 @@ func main() {
 	}
 }
 
-func hasSuffix(path, suffix string) bool {
+func hasSuffix(
+	path string,
+	suffix string,
+) bool {
 	if len(path) < len(suffix) {
 		return false
 	}

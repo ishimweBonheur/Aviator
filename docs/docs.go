@@ -153,6 +153,168 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/bets/{bet_id}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cashes out an active bet using the current server-side multiplier.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "cashout"
+                ],
+                "summary": "Cash out a bet",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Bet ID",
+                        "name": "bet_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/cashout.CashoutResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/deposits": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns deposits for the authenticated user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "deposits"
+                ],
+                "summary": "List deposits",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/deposit.Deposit"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to load deposits",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a deposit request for the authenticated user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "deposits"
+                ],
+                "summary": "Create a deposit",
+                "parameters": [
+                    {
+                        "description": "Deposit details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/deposit.CreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/deposit.Deposit"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request or deposit",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/game/rounds": {
             "post": {
                 "description": "Creates a new game round when no other round is active.",
@@ -532,6 +694,101 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/withdrawals": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns withdrawals for the authenticated user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "withdrawals"
+                ],
+                "summary": "List withdrawals",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/withdrawal.Withdrawal"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to load withdrawals",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a withdrawal request for the authenticated user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "withdrawals"
+                ],
+                "summary": "Create a withdrawal",
+                "parameters": [
+                    {
+                        "description": "Withdrawal details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/withdrawal.CreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/withdrawal.CreateResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request or withdrawal",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "409": {
+                        "description": "Insufficient balance",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Returns the current health status of the backend.",
@@ -655,6 +912,86 @@ const docTemplate = `{
                 }
             }
         },
+        "cashout.CashoutResponse": {
+            "type": "object",
+            "properties": {
+                "bet_amount": {
+                    "type": "number"
+                },
+                "bet_id": {
+                    "type": "integer"
+                },
+                "multiplier": {
+                    "type": "number"
+                },
+                "payout": {
+                    "type": "number"
+                },
+                "remaining_balance": {
+                    "type": "number"
+                }
+            }
+        },
+        "deposit.CreateRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "provider_reference": {
+                    "type": "string"
+                }
+            }
+        },
+        "deposit.Deposit": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "provider_reference": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/deposit.Status"
+                },
+                "user_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "deposit.Status": {
+            "type": "string",
+            "enum": [
+                "PENDING",
+                "PROCESSING",
+                "COMPLETED",
+                "FAILED",
+                "CANCELLED"
+            ],
+            "x-enum-varnames": [
+                "StatusPending",
+                "StatusProcessing",
+                "StatusCompleted",
+                "StatusFailed",
+                "StatusCancelled"
+            ]
+        },
         "game.GameRound": {
             "type": "object",
             "properties": {
@@ -739,11 +1076,79 @@ const docTemplate = `{
                     "example": 1
                 }
             }
+        },
+        "withdrawal.CreateRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                }
+            }
+        },
+        "withdrawal.CreateResult": {
+            "type": "object",
+            "properties": {
+                "remaining_balance": {
+                    "type": "number"
+                },
+                "withdrawal": {
+                    "$ref": "#/definitions/withdrawal.Withdrawal"
+                }
+            }
+        },
+        "withdrawal.Status": {
+            "type": "string",
+            "enum": [
+                "PENDING",
+                "PROCESSING",
+                "COMPLETED",
+                "FAILED",
+                "CANCELLED"
+            ],
+            "x-enum-varnames": [
+                "StatusPending",
+                "StatusProcessing",
+                "StatusCompleted",
+                "StatusFailed",
+                "StatusCancelled"
+            ]
+        },
+        "withdrawal.Withdrawal": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "provider_reference": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/withdrawal.Status"
+                },
+                "user_id": {
+                    "type": "integer"
+                }
+            }
         }
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Enter your JWT token. Swagger UI will send it as \"Bearer \u003ctoken\u003e\".",
+            "description": "Enter \"Bearer\" followed by a space and your JWT token.",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

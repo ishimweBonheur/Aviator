@@ -67,6 +67,61 @@ definitions:
       round_id:
         type: integer
     type: object
+  cashout.CashoutResponse:
+    properties:
+      bet_amount:
+        type: number
+      bet_id:
+        type: integer
+      multiplier:
+        type: number
+      payout:
+        type: number
+      remaining_balance:
+        type: number
+    type: object
+  deposit.CreateRequest:
+    properties:
+      amount:
+        type: string
+      provider:
+        type: string
+      provider_reference:
+        type: string
+    type: object
+  deposit.Deposit:
+    properties:
+      amount:
+        type: number
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: integer
+      provider:
+        type: string
+      provider_reference:
+        type: string
+      status:
+        $ref: '#/definitions/deposit.Status'
+      user_id:
+        type: integer
+    type: object
+  deposit.Status:
+    enum:
+    - PENDING
+    - PROCESSING
+    - COMPLETED
+    - FAILED
+    - CANCELLED
+    type: string
+    x-enum-varnames:
+    - StatusPending
+    - StatusProcessing
+    - StatusCompleted
+    - StatusFailed
+    - StatusCancelled
   game.GameRound:
     properties:
       client_seed:
@@ -125,6 +180,53 @@ definitions:
         type: string
       user_id:
         example: 1
+        type: integer
+    type: object
+  withdrawal.CreateRequest:
+    properties:
+      amount:
+        type: string
+      provider:
+        type: string
+    type: object
+  withdrawal.CreateResult:
+    properties:
+      remaining_balance:
+        type: number
+      withdrawal:
+        $ref: '#/definitions/withdrawal.Withdrawal'
+    type: object
+  withdrawal.Status:
+    enum:
+    - PENDING
+    - PROCESSING
+    - COMPLETED
+    - FAILED
+    - CANCELLED
+    type: string
+    x-enum-varnames:
+    - StatusPending
+    - StatusProcessing
+    - StatusCompleted
+    - StatusFailed
+    - StatusCancelled
+  withdrawal.Withdrawal:
+    properties:
+      amount:
+        type: number
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: integer
+      provider:
+        type: string
+      provider_reference:
+        type: string
+      status:
+        $ref: '#/definitions/withdrawal.Status'
+      user_id:
         type: integer
     type: object
 host: localhost:7000
@@ -224,6 +326,109 @@ paths:
       summary: Place a bet
       tags:
       - betting
+  /api/bets/{bet_id}:
+    post:
+      consumes:
+      - application/json
+      description: Cashes out an active bet using the current server-side multiplier.
+      parameters:
+      - description: Bet ID
+        in: path
+        name: bet_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/cashout.CashoutResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cash out a bet
+      tags:
+      - cashout
+  /api/deposits:
+    get:
+      description: Returns deposits for the authenticated user.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/deposit.Deposit'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            type: string
+        "500":
+          description: Failed to load deposits
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: List deposits
+      tags:
+      - deposits
+    post:
+      consumes:
+      - application/json
+      description: Creates a deposit request for the authenticated user.
+      parameters:
+      - description: Deposit details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/deposit.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/deposit.Deposit'
+        "400":
+          description: Invalid request or deposit
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Create a deposit
+      tags:
+      - deposits
   /api/game/rounds:
     post:
       description: Creates a new game round when no other round is active.
@@ -472,6 +677,66 @@ paths:
       summary: Get wallet balance
       tags:
       - wallet
+  /api/withdrawals:
+    get:
+      description: Returns withdrawals for the authenticated user.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/withdrawal.Withdrawal'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            type: string
+        "500":
+          description: Failed to load withdrawals
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: List withdrawals
+      tags:
+      - withdrawals
+    post:
+      consumes:
+      - application/json
+      description: Creates a withdrawal request for the authenticated user.
+      parameters:
+      - description: Withdrawal details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/withdrawal.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/withdrawal.CreateResult'
+        "400":
+          description: Invalid request or withdrawal
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            type: string
+        "409":
+          description: Insufficient balance
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Create a withdrawal
+      tags:
+      - withdrawals
   /health:
     get:
       description: Returns the current health status of the backend.
@@ -491,7 +756,7 @@ schemes:
 - http
 securityDefinitions:
   BearerAuth:
-    description: Enter your JWT token. Swagger UI will send it as "Bearer <token>".
+    description: Enter "Bearer" followed by a space and your JWT token.
     in: header
     name: Authorization
     type: apiKey

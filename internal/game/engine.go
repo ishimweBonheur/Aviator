@@ -2,6 +2,7 @@ package game
 
 import (
 	"aviator/backend/internal/multiplier"
+	"aviator/backend/internal/realtime"
 	"aviator/backend/internal/settlement"
 	"context"
 	"fmt"
@@ -10,10 +11,13 @@ import (
 	"time"
 )
 
+const preRoundCountdown = 5 * time.Second
+
 type Engine struct {
 	service           *Service
 	multiplierService *multiplier.Service
 	settlementService *settlement.Service
+	realtimeHub       *realtime.Hub
 
 	mu      sync.Mutex
 	running bool
@@ -23,11 +27,13 @@ func NewEngine(
 	service *Service,
 	multiplierService *multiplier.Service,
 	settlementService *settlement.Service,
+	realtimeHub *realtime.Hub,
 ) *Engine {
 	return &Engine{
 		service:           service,
 		multiplierService: multiplierService,
 		settlementService: settlementService,
+		realtimeHub:       realtimeHub,
 	}
 }
 
@@ -38,12 +44,10 @@ func (e *Engine) Run(ctx context.Context) {
 		e.mu.Unlock()
 
 		log.Println("game engine is already running")
-
 		return
 	}
 
 	e.running = true
-
 	e.mu.Unlock()
 
 	log.Println("game engine started")
@@ -84,7 +88,7 @@ func (e *Engine) runContinuous(
 	ctx context.Context,
 ) error {
 	// ============================================================
-	// ENSURE CURRENT RUNNING ROUND
+	// GET CURRENT RUNNING ROUND
 	// ============================================================
 
 	runningRound, err := e.service.repository.GetRunningRound(ctx)
@@ -96,7 +100,7 @@ func (e *Engine) runContinuous(
 	}
 
 	// ============================================================
-	// ENSURE UPCOMING BETTING ROUND
+	// GET UPCOMING BETTING ROUND
 	// ============================================================
 
 	bettingRound, err := e.service.repository.GetBettingRound(ctx)
@@ -107,11 +111,18 @@ func (e *Engine) runContinuous(
 		)
 	}
 
-	// ------------------------------------------------------------
-	// No running round yet.
-	// ------------------------------------------------------------
+	// ============================================================
+	// NO RUNNING ROUND
+	//
+	// This happens:
+	// - on first startup
+	// - after a clean restart
+	// - if no round is currently flying
+	// ============================================================
 
 	if runningRound == nil {
+		// If there is no betting round either,
+		// create one and open betting.
 		if bettingRound == nil {
 			bettingRound, err = e.createAndOpenRound(ctx)
 			if err != nil {
@@ -122,16 +133,24 @@ func (e *Engine) runContinuous(
 				"round #%d: initial betting opened",
 				bettingRound.RoundNumber,
 			)
+		}
 
-			if err := waitFor(
+		if bettingRound == nil {
+			return fmt.Errorf(
+				"no betting round available to start",
+			)
+		}
+
+		// Every round gets a visible countdown before
+		// betting is closed and the plane starts.
+		if bettingRound.Status == RoundBettingOpen {
+			if err := e.waitForNextRound(
 				ctx,
-				5*time.Second,
+				bettingRound,
 			); err != nil {
 				return err
 			}
-		}
 
-		if bettingRound.Status == RoundBettingOpen {
 			bettingRound, err = e.prepareRoundForRunning(
 				ctx,
 				bettingRound,
@@ -143,23 +162,37 @@ func (e *Engine) runContinuous(
 
 		runningRound = bettingRound
 
-		// Create the next betting round immediately.
+		if runningRound == nil {
+			return fmt.Errorf(
+				"failed to establish running round",
+			)
+		}
+
+		log.Printf(
+			"round #%d: now running",
+			runningRound.RoundNumber,
+		)
+
+		// As soon as this round starts flying,
+		// create/open the next betting round.
 		if _, err := e.ensureBettingRound(ctx); err != nil {
 			return err
 		}
 	}
 
-	// ------------------------------------------------------------
-	// A running round already exists.
-	// Make sure another round is accepting bets.
-	// ------------------------------------------------------------
+	// ============================================================
+	// ENSURE UPCOMING BETTING ROUND EXISTS
+	//
+	// While the current plane is flying, players can already
+	// place bets on the next round.
+	// ============================================================
 
 	if _, err := e.ensureBettingRound(ctx); err != nil {
 		return err
 	}
 
 	// ============================================================
-	// RUN CURRENT ROUND
+	// RUN CURRENT ROUND MULTIPLIER
 	// ============================================================
 
 	if err := e.runMultiplier(
@@ -191,10 +224,24 @@ func (e *Engine) runContinuous(
 		)
 	}
 
+	if round.CrashPoint == nil {
+		return fmt.Errorf(
+			"round #%d crashed without crash point",
+			round.RoundNumber,
+		)
+	}
+
+	e.realtimeHub.Broadcast(realtime.Event{
+		Type:        realtime.EventRoundCrashed,
+		RoundID:     round.ID,
+		RoundNumber: round.RoundNumber,
+		CrashPoint:  round.CrashPoint.StringFixed(2),
+	})
+
 	log.Printf(
 		"round #%d: crashed at %sx",
 		round.RoundNumber,
-		round.CrashPoint.StringFixed(4),
+		round.CrashPoint.StringFixed(2),
 	)
 
 	// ============================================================
@@ -214,6 +261,12 @@ func (e *Engine) runContinuous(
 
 	e.multiplierService.Remove(round.ID)
 
+	e.realtimeHub.Broadcast(realtime.Event{
+		Type:        realtime.EventRoundSettled,
+		RoundID:     round.ID,
+		RoundNumber: round.RoundNumber,
+	})
+
 	log.Printf(
 		"round #%d: settled, %d bets lost",
 		round.RoundNumber,
@@ -221,7 +274,7 @@ func (e *Engine) runContinuous(
 	)
 
 	// ============================================================
-	// PROMOTE UPCOMING ROUND
+	// GET / CREATE NEXT BETTING ROUND
 	// ============================================================
 
 	nextRound, err := e.service.repository.GetBettingRound(ctx)
@@ -232,19 +285,50 @@ func (e *Engine) runContinuous(
 		)
 	}
 
+	// Normally this already exists because it was created while
+	// the previous round was flying.
+	//
+	// But if it does not exist for some reason, recover by
+	// creating one now.
+	if nextRound == nil {
+		nextRound, err = e.ensureBettingRound(ctx)
+		if err != nil {
+			return fmt.Errorf(
+				"ensure next betting round: %w",
+				err,
+			)
+		}
+	}
+
 	if nextRound == nil {
 		return fmt.Errorf(
-			"no upcoming betting round exists after round #%d",
-			round.RoundNumber,
+			"next betting round is nil",
 		)
 	}
 
-	nextRound, err = e.prepareRoundForRunning(
-		ctx,
-		nextRound,
-	)
-	if err != nil {
-		return err
+	// ============================================================
+	// PRE-ROUND COUNTDOWN
+	//
+	// Even though this round may already have been accepting bets
+	// while the previous plane was flying, we keep a final
+	// countdown before starting it.
+	// ============================================================
+
+	if nextRound.Status == RoundBettingOpen {
+		if err := e.waitForNextRound(
+			ctx,
+			nextRound,
+		); err != nil {
+			return err
+		}
+
+		nextRound, err = e.prepareRoundForRunning(
+			ctx,
+			nextRound,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
 	log.Printf(
@@ -253,15 +337,18 @@ func (e *Engine) runContinuous(
 	)
 
 	// ============================================================
-	// CREATE NEXT BETTING ROUND
+	// CREATE THE FOLLOWING BETTING ROUND
+	//
+	// Now that nextRound is RUNNING, immediately create another
+	// BETTING_OPEN round so players can bet ahead.
 	// ============================================================
 
 	if _, err := e.ensureBettingRound(ctx); err != nil {
 		return err
 	}
 
-	// The next invocation of runContinuous
-	// will run the newly promoted round.
+	// The next runContinuous() invocation finds nextRound
+	// as the current RUNNING round.
 	return nil
 }
 
@@ -292,6 +379,17 @@ func (e *Engine) createAndOpenRound(
 		)
 	}
 
+	log.Printf(
+		"round #%d: betting opened",
+		round.RoundNumber,
+	)
+
+	e.realtimeHub.Broadcast(realtime.Event{
+		Type:        realtime.EventRoundOpened,
+		RoundID:     round.ID,
+		RoundNumber: round.RoundNumber,
+	})
+
 	return round, nil
 }
 
@@ -315,11 +413,6 @@ func (e *Engine) ensureBettingRound(
 		return nil, err
 	}
 
-	log.Printf(
-		"round #%d: betting opened",
-		round.RoundNumber,
-	)
-
 	return round, nil
 }
 
@@ -327,6 +420,12 @@ func (e *Engine) prepareRoundForRunning(
 	ctx context.Context,
 	round *GameRound,
 ) (*GameRound, error) {
+	if round == nil {
+		return nil, fmt.Errorf(
+			"cannot prepare nil round",
+		)
+	}
+
 	if round.Status != RoundBettingOpen {
 		return nil, fmt.Errorf(
 			"round #%d cannot be promoted from status %s",
@@ -382,7 +481,7 @@ func (e *Engine) prepareRoundForRunning(
 	log.Printf(
 		"round #%d: crash point = %sx",
 		round.RoundNumber,
-		round.CrashPoint.StringFixed(4),
+		round.CrashPoint.StringFixed(2),
 	)
 
 	// ============================================================
@@ -401,6 +500,17 @@ func (e *Engine) prepareRoundForRunning(
 		)
 	}
 
+	log.Printf(
+		"round #%d: started",
+		round.RoundNumber,
+	)
+
+	e.realtimeHub.Broadcast(realtime.Event{
+		Type:        realtime.EventRoundStarted,
+		RoundID:     round.ID,
+		RoundNumber: round.RoundNumber,
+	})
+
 	return round, nil
 }
 
@@ -408,26 +518,12 @@ func (e *Engine) prepareRoundForRunning(
 // TIME-BASED MULTIPLIER
 // ================================================================
 //
-// The multiplier is now determined by:
+// The multiplier is determined from elapsed time:
 //
-//     elapsed time since StartedAt
-//                    ↓
-//             growth function
+//	multiplier = e^(growthRate * elapsedSeconds)
 //
-// The ticker only controls how frequently we check the value.
-// It no longer controls the multiplier itself.
-//
-// This means:
-//
-//     1.00x -> 1.01x -> 1.02x
-//
-// is NOT caused by:
-//
-//     ticker -> +0.01
-//
-// Instead:
-//
-//     StartedAt + current time -> multiplier
+// The ticker only determines how often the current value is
+// published. It does not increment the multiplier itself.
 //
 // ================================================================
 
@@ -435,6 +531,12 @@ func (e *Engine) runMultiplier(
 	ctx context.Context,
 	round *GameRound,
 ) error {
+	if round == nil {
+		return fmt.Errorf(
+			"cannot run multiplier for nil round",
+		)
+	}
+
 	if round.StartedAt == nil {
 		return fmt.Errorf(
 			"round #%d has no started_at",
@@ -459,7 +561,6 @@ func (e *Engine) runMultiplier(
 	ticker := time.NewTicker(
 		100 * time.Millisecond,
 	)
-
 	defer ticker.Stop()
 
 	for {
@@ -468,7 +569,6 @@ func (e *Engine) runMultiplier(
 			return ctx.Err()
 
 		case now := <-ticker.C:
-
 			current := multiplier.Calculate(
 				*round.StartedAt,
 				now,
@@ -476,7 +576,9 @@ func (e *Engine) runMultiplier(
 
 			// Never expose a multiplier above the
 			// authoritative crash point.
-			if current.GreaterThan(*round.CrashPoint) {
+			if current.GreaterThan(
+				*round.CrashPoint,
+			) {
 				current = *round.CrashPoint
 			}
 
@@ -489,6 +591,13 @@ func (e *Engine) runMultiplier(
 					err,
 				)
 			}
+
+			e.realtimeHub.Broadcast(realtime.Event{
+				Type:        realtime.EventMultiplierUpdate,
+				RoundID:     round.ID,
+				RoundNumber: round.RoundNumber,
+				Multiplier:  current.StringFixed(2),
+			})
 
 			log.Printf(
 				"round #%d: multiplier = %sx",
@@ -511,18 +620,53 @@ func (e *Engine) runMultiplier(
 	}
 }
 
-func waitFor(
+// ================================================================
+// PRE-ROUND COUNTDOWN
+// ================================================================
+
+func (e *Engine) waitForNextRound(
 	ctx context.Context,
-	duration time.Duration,
+	round *GameRound,
 ) error {
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-
-	case <-timer.C:
-		return nil
+	if round == nil {
+		return fmt.Errorf(
+			"cannot start countdown for nil round",
+		)
 	}
+
+	remaining := int(
+		preRoundCountdown / time.Second,
+	)
+
+	log.Printf(
+		"round #%d: starts in %d seconds",
+		round.RoundNumber,
+		remaining,
+	)
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for remaining > 0 {
+		log.Printf(
+			"round #%d: starting in %d...",
+			round.RoundNumber,
+			remaining,
+		)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case <-ticker.C:
+			remaining--
+		}
+	}
+
+	log.Printf(
+		"round #%d: countdown finished",
+		round.RoundNumber,
+	)
+
+	return nil
 }
