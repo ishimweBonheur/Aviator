@@ -1,6 +1,7 @@
 package withdrawal
 
 import (
+	"aviator/backend/internal/risk"
 	"context"
 	"fmt"
 	"strings"
@@ -9,6 +10,7 @@ import (
 )
 
 type Service struct {
+	limits     risk.Limits
 	repository *Repository
 }
 
@@ -16,6 +18,7 @@ func NewService(
 	repository *Repository,
 ) *Service {
 	return &Service{
+		limits:     risk.Default(),
 		repository: repository,
 	}
 }
@@ -46,6 +49,9 @@ func (s *Service) Create(
 		)
 	}
 
+	if err := risk.Amount("withdrawal", amount, s.limits.MinWithdrawal, s.limits.MaxWithdrawal); err != nil {
+		return nil, err
+	}
 	provider := strings.TrimSpace(
 		req.Provider,
 	)
@@ -96,3 +102,5 @@ func (s *Service) FailAndRefund(
 		withdrawalID,
 	)
 }
+
+func (s *Service) SetLimits(limits risk.Limits) { s.limits = limits }

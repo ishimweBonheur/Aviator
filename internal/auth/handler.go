@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"aviator/backend/internal/httpapi"
 	"encoding/json"
 	"net/http"
 )
@@ -53,7 +54,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(
+		httpapi.Error(
 			w,
 			"invalid request body",
 			http.StatusBadRequest,
@@ -69,11 +70,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		http.Error(
-			w,
-			err.Error(),
-			http.StatusBadRequest,
-		)
+		httpapi.ServiceError(w, err)
 		return
 	}
 
@@ -100,7 +97,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(
+		httpapi.Error(
 			w,
 			"invalid request body",
 			http.StatusBadRequest,
@@ -115,11 +112,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		http.Error(
-			w,
-			err.Error(),
-			http.StatusUnauthorized,
-		)
+		httpapi.ServiceError(w, err)
 		return
 	}
 

@@ -2,7 +2,6 @@ package multiplier
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -128,52 +127,6 @@ func (s *Service) Remove(roundID int64) {
 //
 // The function also protects against invalid timestamps and floating-point
 // overflow so a stale RUNNING round cannot crash the entire application.
-func Calculate(
-	startedAt time.Time,
-	now time.Time,
-) decimal.Decimal {
-	if startedAt.IsZero() {
-		return oneMultiplier
-	}
-
-	if now.IsZero() {
-		return oneMultiplier
-	}
-
-	elapsed := now.Sub(startedAt).Seconds()
-
-	if elapsed <= 0 {
-		return oneMultiplier
-	}
-
-	exponent := growthRate * elapsed
-
-	// math.Exp overflows near exponent 709.
-	//
-	// We use a much lower threshold based on our own multiplier ceiling.
-	// Once the exponent reaches this point there is no reason to continue
-	// calculating a larger value.
-	maxExponent := math.Log(float64(maxMultiplier))
-
-	if exponent >= maxExponent {
-		return maxMultiplierDecimal
-	}
-
-	value := math.Exp(exponent)
-
-	// Extra defensive checks. These should normally never be reached
-	// because of the exponent check above.
-	if math.IsInf(value, 0) || math.IsNaN(value) {
-		return maxMultiplierDecimal
-	}
-
-	if value < 1 {
-		return oneMultiplier
-	}
-
-	if value >= float64(maxMultiplier) {
-		return maxMultiplierDecimal
-	}
-
-	return decimal.NewFromFloat(value).Round(2)
+func Calculate(startedAt, now time.Time) decimal.Decimal {
+	return (Clock{Rate: growthRate}).Calculate(startedAt, now)
 }

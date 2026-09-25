@@ -21,7 +21,7 @@ type Bet struct {
 	CashoutMultiplier *decimal.Decimal `json:"cashout_multiplier,omitempty"`
 	Payout            decimal.Decimal  `json:"payout"`
 	PlacedAt          string           `json:"placed_at"`
-	CashedOutAt      *string          `json:"cashed_out_at,omitempty"`
+	CashedOutAt       *string          `json:"cashed_out_at,omitempty"`
 	CreatedAt         string           `json:"created_at"`
 }
 

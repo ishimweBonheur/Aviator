@@ -1,6 +1,7 @@
 package deposit
 
 import (
+	"aviator/backend/internal/risk"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 )
 
 type Service struct {
+	limits     risk.Limits
 	repository *Repository
 }
 
@@ -18,6 +20,7 @@ func NewService(
 	repository *Repository,
 ) *Service {
 	return &Service{
+		limits:     risk.Default(),
 		repository: repository,
 	}
 }
@@ -48,6 +51,9 @@ func (s *Service) Create(
 		)
 	}
 
+	if err := risk.Amount("deposit", amount, s.limits.MinDeposit, s.limits.MaxDeposit); err != nil {
+		return nil, err
+	}
 	provider := strings.ToUpper(
 		strings.TrimSpace(req.Provider),
 	)
@@ -82,29 +88,7 @@ func (s *Service) Create(
 		return nil, err
 	}
 
-	// Development/testing provider.
-	//
-	// SANDBOX deposits are automatically confirmed so that
-	// the complete wallet-credit flow can be tested without
-	// connecting to an external payment provider.
-	if Provider(provider) == ProviderSandbox {
-		completedDeposit, err :=
-			s.repository.CompleteByProviderReference(
-				ctx,
-				provider,
-				providerReference,
-			)
-
-		if err != nil {
-			return nil, fmt.Errorf(
-				"complete sandbox deposit: %w",
-				err,
-			)
-		}
-
-		return completedDeposit, nil
-	}
-
+	// SANDBOX creation and completion commit in one repository transaction.
 	// MTN_MOMO remains pending until the real payment provider
 	// confirms payment through its callback/webhook.
 	return deposit, nil
@@ -148,3 +132,5 @@ func generateProviderReference(
 		hex.EncodeToString(bytes),
 	), nil
 }
+
+func (s *Service) SetLimits(limits risk.Limits) { s.limits = limits }

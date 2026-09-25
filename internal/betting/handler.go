@@ -2,6 +2,7 @@ package betting
 
 import (
 	"aviator/backend/internal/auth"
+	"aviator/backend/internal/httpapi"
 	"encoding/json"
 	"net/http"
 
@@ -33,14 +34,14 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) PlaceBet(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		httpapi.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	var request PlaceBetRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(
+		httpapi.Error(
 			w,
 			"invalid request body",
 			http.StatusBadRequest,
@@ -50,7 +51,7 @@ func (h *Handler) PlaceBet(w http.ResponseWriter, r *http.Request) {
 
 	amount, err := decimal.NewFromString(request.Amount)
 	if err != nil {
-		http.Error(
+		httpapi.Error(
 			w,
 			"invalid amount",
 			http.StatusBadRequest,
@@ -66,11 +67,7 @@ func (h *Handler) PlaceBet(w http.ResponseWriter, r *http.Request) {
 		amount,
 	)
 	if err != nil {
-		http.Error(
-			w,
-			err.Error(),
-			http.StatusBadRequest,
-		)
+		httpapi.ServiceError(w, err)
 		return
 	}
 

@@ -3,6 +3,7 @@ package betting
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,13 +47,14 @@ func (r *Repository) GetRoundStatus(
 	roundID int64,
 ) (string, error) {
 	var status string
+	var closes *time.Time
 
 	err := tx.QueryRow(ctx, `
-		SELECT status
+		SELECT status, betting_closes_at
 		FROM game_rounds
 		WHERE id = $1
 		FOR SHARE
-	`, roundID).Scan(&status)
+	`, roundID).Scan(&status, &closes)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -62,6 +64,9 @@ func (r *Repository) GetRoundStatus(
 		return "", fmt.Errorf("failed to get round status: %w", err)
 	}
 
+	if closes == nil || !time.Now().Before(*closes) {
+		return "BETTING_CLOSED", nil
+	}
 	return status, nil
 }
 

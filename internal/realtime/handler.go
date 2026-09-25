@@ -23,6 +23,12 @@ func NewHandler(hub *Hub) *Handler {
 	}}
 }
 
+// ServeHTTP upgrades a public broadcast-only WebSocket connection.
+// @Summary Connect to realtime game events
+// @Description WebSocket upgrade required. Events and reconnect snapshot flow are documented in LOCAL_SYSTEM.md.
+// @Tags realtime
+// @Success 101 {string} string "Switching Protocols"
+// @Router /ws [get]
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)

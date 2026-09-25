@@ -2,10 +2,10 @@ package cashout
 
 import (
 	"aviator/backend/internal/auth"
+	"aviator/backend/internal/httpapi"
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 )
 
 type Handler struct {
@@ -25,20 +25,20 @@ func NewHandler(service *Service) *Handler {
 // @Security BearerAuth
 // @Accept json
 // @Produce json
-// @Param bet_id path int true "Bet ID"
+// @Param id path int true "Bet ID"
 // @Success 200 {object} CashoutResponse
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
 // @Failure 404 {object} map[string]string
 // @Failure 409 {object} map[string]string
-// @Router /api/bets/{bet_id} [post]
+// @Router /api/bets/{id}/cashout [post]
 func (h *Handler) CashOut(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
 	// Only POST is allowed.
 	if r.Method != http.MethodPost {
-		http.Error(
+		httpapi.Error(
 			w,
 			"method not allowed",
 			http.StatusMethodNotAllowed,
@@ -52,7 +52,7 @@ func (h *Handler) CashOut(
 	)
 
 	if !ok {
-		http.Error(
+		httpapi.Error(
 			w,
 			"unauthorized",
 			http.StatusUnauthorized,
@@ -60,30 +60,15 @@ func (h *Handler) CashOut(
 		return
 	}
 
-	// Expected:
-	// /api/bets/{bet_id}
-	parts := strings.Split(
-		strings.Trim(r.URL.Path, "/"),
-		"/",
-	)
-
-	if len(parts) != 3 ||
-		parts[0] != "api" ||
-		parts[1] != "bets" ||
-		parts[2] == "" {
-		http.NotFound(w, r)
-		return
-	}
-
 	// Parse bet ID.
 	betID, err := strconv.ParseInt(
-		parts[2],
+		r.PathValue("id"),
 		10,
 		64,
 	)
 
 	if err != nil || betID <= 0 {
-		http.Error(
+		httpapi.Error(
 			w,
 			"invalid bet ID",
 			http.StatusBadRequest,
@@ -99,11 +84,7 @@ func (h *Handler) CashOut(
 	)
 
 	if err != nil {
-		http.Error(
-			w,
-			err.Error(),
-			http.StatusBadRequest,
-		)
+		httpapi.ServiceError(w, err)
 		return
 	}
 

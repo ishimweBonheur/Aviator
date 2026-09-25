@@ -132,3 +132,5 @@ func extract52Bits(hash []byte) *big.Int {
 
 	return new(big.Int).And(value, mask)
 }
+
+func (s *Service) HouseEdge() decimal.Decimal { return s.config.HouseEdge }

@@ -58,6 +58,17 @@ definitions:
       username:
         type: string
     type: object
+  betting.CancelResult:
+    properties:
+      bet_id:
+        type: integer
+      refunded_amount:
+        type: string
+      remaining_balance:
+        type: string
+      status:
+        type: string
+    type: object
   betting.PlaceBetRequest:
     properties:
       amount:
@@ -85,8 +96,6 @@ definitions:
       amount:
         type: string
       provider:
-        type: string
-      provider_reference:
         type: string
     type: object
   deposit.Deposit:
@@ -124,6 +133,10 @@ definitions:
     - StatusCancelled
   game.GameRound:
     properties:
+      betting_closes_at:
+        type: string
+      betting_opened_at:
+        type: string
       client_seed:
         type: string
       crash_point:
@@ -132,6 +145,8 @@ definitions:
         type: string
       ended_at:
         type: string
+      house_edge:
+        type: number
       id:
         type: integer
       nonce:
@@ -163,6 +178,34 @@ definitions:
     - RoundRunning
     - RoundCrashed
     - RoundSettled
+  game.Snapshot:
+    properties:
+      current_multiplier:
+        type: string
+      running:
+        $ref: '#/definitions/game.GameRound'
+      server_time:
+        type: string
+      upcoming:
+        $ref: '#/definitions/game.GameRound'
+    type: object
+  risk.Limits:
+    properties:
+      maxBet:
+        type: number
+      maxDeposit:
+        type: number
+      maxPayout:
+        type: number
+      maxWithdrawal:
+        type: number
+      minBet:
+        type: number
+      minDeposit:
+        type: number
+      minWithdrawal:
+        type: number
+    type: object
   settlement.Result:
     properties:
       alreadySettled:
@@ -294,6 +337,22 @@ paths:
       tags:
       - auth
   /api/bets:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List own bets (latest 200)
+      tags:
+      - betting
     post:
       consumes:
       - application/json
@@ -326,7 +385,33 @@ paths:
       summary: Place a bet
       tags:
       - betting
-  /api/bets/{bet_id}:
+  /api/bets/{id}/cancel:
+    post:
+      parameters:
+      - description: Bet ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/betting.CancelResult'
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cancel an active bet while betting is open
+      tags:
+      - betting
+  /api/bets/{id}/cashout:
     post:
       consumes:
       - application/json
@@ -334,7 +419,7 @@ paths:
       parameters:
       - description: Bet ID
         in: path
-        name: bet_id
+        name: id
         required: true
         type: integer
       produces:
@@ -430,22 +515,17 @@ paths:
       tags:
       - deposits
   /api/game/rounds:
-    post:
-      description: Creates a new game round when no other round is active.
+    get:
       produces:
       - application/json
       responses:
-        "201":
-          description: Created
+        "200":
+          description: OK
           schema:
-            $ref: '#/definitions/game.GameRound'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Create game round
+            items:
+              $ref: '#/definitions/game.GameRound'
+            type: array
+      summary: List recent completed rounds (latest 50)
       tags:
       - game
   /api/game/rounds/{id}:
@@ -479,9 +559,8 @@ paths:
       summary: Get game round
       tags:
       - game
-  /api/game/rounds/{id}/close:
-    post:
-      description: Moves a game round from BETTING_OPEN to BETTING_CLOSED.
+  /api/game/rounds/{id}/fairness:
+    get:
       parameters:
       - description: Round ID
         in: path
@@ -495,125 +574,20 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/game.GameRound'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Close betting
-      tags:
-      - game
-  /api/game/rounds/{id}/crash:
-    post:
-      description: Moves a game round from RUNNING to CRASHED.
-      parameters:
-      - description: Round ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/game.GameRound'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Crash game round
-      tags:
-      - game
-  /api/game/rounds/{id}/open:
-    post:
-      description: Moves a game round from CREATED to BETTING_OPEN.
-      parameters:
-      - description: Round ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/game.GameRound'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Open betting
-      tags:
-      - game
-  /api/game/rounds/{id}/settle:
-    post:
-      description: Moves a game round from CRASHED to SETTLED.
-      parameters:
-      - description: Round ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/game.GameRound'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Settle game round
-      tags:
-      - game
-  /api/game/rounds/{id}/start:
-    post:
-      description: Moves a game round from BETTING_CLOSED to RUNNING.
-      parameters:
-      - description: Round ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/game.GameRound'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Start game round
+      summary: Get round fairness commitment or completed reveal
       tags:
       - game
   /api/game/rounds/current:
     get:
-      description: Returns the latest active game round, if one exists.
+      description: Returns running and upcoming rounds, server time and live multiplier;
+        future secrets are redacted.
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/game.GameRound'
+            $ref: '#/definitions/game.Snapshot'
         "404":
           description: Not Found
           schema:
@@ -629,31 +603,18 @@ paths:
       summary: Get current game round
       tags:
       - game
-  /api/settlement/rounds/{id}/settle:
-    post:
-      description: Marks a crashed round as settled and resolves any active bets.
-      parameters:
-      - description: Round ID
-        in: path
-        name: id
-        required: true
-        type: integer
+  /api/limits:
+    get:
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/settlement.Result'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Settle game round
+            $ref: '#/definitions/risk.Limits'
+      summary: Get configured betting and wallet limits
       tags:
-      - settlement
+      - game
   /api/wallet/balance:
     get:
       description: Returns the current wallet balance for the authenticated user.
@@ -675,6 +636,23 @@ paths:
       security:
       - BearerAuth: []
       summary: Get wallet balance
+      tags:
+      - wallet
+  /api/wallet/transactions:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List own wallet transactions (latest 200)
       tags:
       - wallet
   /api/withdrawals:
@@ -752,6 +730,18 @@ paths:
       summary: Health check
       tags:
       - health
+  /ws:
+    get:
+      description: WebSocket upgrade required. Events and reconnect snapshot flow
+        are documented in LOCAL_SYSTEM.md.
+      responses:
+        "101":
+          description: Switching Protocols
+          schema:
+            type: string
+      summary: Connect to realtime game events
+      tags:
+      - realtime
 schemes:
 - http
 securityDefinitions:

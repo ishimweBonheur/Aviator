@@ -23,7 +23,6 @@ func NewHandler(service *Service) *Handler {
 // @Param id path int true "Round ID"
 // @Success 200 {object} Result
 // @Failure 400 {object} map[string]string
-// @Router /api/settlement/rounds/{id}/settle [post]
 func (h *Handler) SettleRound(w http.ResponseWriter, r *http.Request) {
 	id, err := getRoundID(r)
 	if err != nil {

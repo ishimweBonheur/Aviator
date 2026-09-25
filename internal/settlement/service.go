@@ -1,6 +1,7 @@
 package settlement
 
 import (
+	"aviator/backend/internal/database"
 	"context"
 	"fmt"
 
@@ -27,7 +28,7 @@ func (s *Service) SettleRound(
 	roundID int64,
 ) (*Result, error) {
 
-	tx, err := s.db.Begin(ctx)
+	tx, err := database.Begin(ctx, s.db)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"begin settlement transaction: %w",

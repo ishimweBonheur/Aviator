@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"aviator/backend/internal/auth"
+	"aviator/backend/internal/httpapi"
 	"encoding/json"
 	"net/http"
 )
@@ -35,7 +36,7 @@ func (h *Handler) GetBalance(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 
 	if !ok {
-		http.Error(
+		httpapi.Error(
 			w,
 			"unauthorized",
 			http.StatusUnauthorized,
@@ -49,7 +50,7 @@ func (h *Handler) GetBalance(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		http.Error(
+		httpapi.Error(
 			w,
 			"failed to get balance",
 			http.StatusInternalServerError,

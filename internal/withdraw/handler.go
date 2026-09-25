@@ -2,8 +2,8 @@ package withdrawal
 
 import (
 	"aviator/backend/internal/auth"
+	"aviator/backend/internal/httpapi"
 	"encoding/json"
-	"errors"
 	"net/http"
 )
 
@@ -31,7 +31,7 @@ func (h *Handler) Handle(
 		h.List(w, r)
 
 	default:
-		http.Error(
+		httpapi.Error(
 			w,
 			"method not allowed",
 			http.StatusMethodNotAllowed,
@@ -60,7 +60,7 @@ func (h *Handler) Create(
 		r.Context(),
 	)
 	if !ok {
-		http.Error(
+		httpapi.Error(
 			w,
 			"unauthorized",
 			http.StatusUnauthorized,
@@ -74,7 +74,7 @@ func (h *Handler) Create(
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		http.Error(
+		httpapi.Error(
 			w,
 			"invalid request body",
 			http.StatusBadRequest,
@@ -88,20 +88,7 @@ func (h *Handler) Create(
 		req,
 	)
 	if err != nil {
-		status := http.StatusBadRequest
-
-		if errors.Is(
-			err,
-			ErrInsufficientBalance,
-		) {
-			status = http.StatusConflict
-		}
-
-		http.Error(
-			w,
-			err.Error(),
-			status,
-		)
+		httpapi.ServiceError(w, err)
 		return
 	}
 
@@ -135,7 +122,7 @@ func (h *Handler) List(
 		r.Context(),
 	)
 	if !ok {
-		http.Error(
+		httpapi.Error(
 			w,
 			"unauthorized",
 			http.StatusUnauthorized,
@@ -148,7 +135,7 @@ func (h *Handler) List(
 		userID,
 	)
 	if err != nil {
-		http.Error(
+		httpapi.Error(
 			w,
 			"failed to load withdrawals",
 			http.StatusInternalServerError,

@@ -1,6 +1,7 @@
 package game
 
 import (
+	"aviator/backend/internal/database"
 	"context"
 	"fmt"
 
@@ -24,7 +25,7 @@ func (r *Repository) GetNextRoundNumber(
 ) (int64, error) {
 	var roundNumber int64
 
-	err := r.db.QueryRow(ctx, `
+	err := database.Query(ctx, r.db).QueryRow(ctx, `
 		SELECT COALESCE(MAX(round_number), 0) + 1
 		FROM game_rounds
 	`).Scan(&roundNumber)
@@ -46,19 +47,20 @@ func (r *Repository) CreateRound(
 	serverSeed string,
 	clientSeed string,
 	nonce int64,
+	houseEdge decimal.Decimal,
 ) (*GameRound, error) {
 	var round GameRound
 
-	err := r.db.QueryRow(ctx, `
+	err := database.Query(ctx, r.db).QueryRow(ctx, `
 		INSERT INTO game_rounds (
 			round_number,
 			server_seed_hash,
 			server_seed,
 			client_seed,
 			nonce,
-			status
+			status,house_edge
 		)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING
 			id,
 			round_number,
@@ -70,14 +72,14 @@ func (r *Repository) CreateRound(
 			status,
 			started_at,
 			ended_at,
-			created_at
+			created_at, betting_opened_at, betting_closes_at, growth_rate, house_edge
 	`,
 		roundNumber,
 		serverSeedHash,
 		serverSeed,
 		clientSeed,
 		nonce,
-		RoundCreated,
+		RoundCreated, houseEdge.String(),
 	).Scan(
 		&round.ID,
 		&round.RoundNumber,
@@ -89,7 +91,7 @@ func (r *Repository) CreateRound(
 		&round.Status,
 		&round.StartedAt,
 		&round.EndedAt,
-		&round.CreatedAt,
+		&round.CreatedAt, &round.BettingOpenedAt, &round.BettingClosesAt, &round.GrowthRate, &round.HouseEdge,
 	)
 
 	if err != nil {
@@ -108,7 +110,7 @@ func (r *Repository) GetRoundByID(
 ) (*GameRound, error) {
 	var round GameRound
 
-	err := r.db.QueryRow(ctx, `
+	err := database.Query(ctx, r.db).QueryRow(ctx, `
 		SELECT
 			id,
 			round_number,
@@ -120,7 +122,7 @@ func (r *Repository) GetRoundByID(
 			status,
 			started_at,
 			ended_at,
-			created_at
+			created_at, betting_opened_at, betting_closes_at, growth_rate, house_edge
 		FROM game_rounds
 		WHERE id = $1
 	`, id).Scan(
@@ -134,7 +136,7 @@ func (r *Repository) GetRoundByID(
 		&round.Status,
 		&round.StartedAt,
 		&round.EndedAt,
-		&round.CreatedAt,
+		&round.CreatedAt, &round.BettingOpenedAt, &round.BettingClosesAt, &round.GrowthRate, &round.HouseEdge,
 	)
 
 	if err != nil {
@@ -178,7 +180,7 @@ func (r *Repository) getRoundByStatus(
 ) (*GameRound, error) {
 	var round GameRound
 
-	err := r.db.QueryRow(ctx, `
+	err := database.Query(ctx, r.db).QueryRow(ctx, `
 		SELECT
 			id,
 			round_number,
@@ -190,7 +192,7 @@ func (r *Repository) getRoundByStatus(
 			status,
 			started_at,
 			ended_at,
-			created_at
+			created_at, betting_opened_at, betting_closes_at, growth_rate, house_edge
 		FROM game_rounds
 		WHERE status = $1
 		ORDER BY round_number DESC
@@ -206,7 +208,7 @@ func (r *Repository) getRoundByStatus(
 		&round.Status,
 		&round.StartedAt,
 		&round.EndedAt,
-		&round.CreatedAt,
+		&round.CreatedAt, &round.BettingOpenedAt, &round.BettingClosesAt, &round.GrowthRate, &round.HouseEdge,
 	)
 
 	if err != nil {
@@ -229,7 +231,7 @@ func (r *Repository) GetCurrentRound(
 ) (*GameRound, error) {
 	var round GameRound
 
-	err := r.db.QueryRow(ctx, `
+	err := database.Query(ctx, r.db).QueryRow(ctx, `
 		SELECT
 			id,
 			round_number,
@@ -241,7 +243,7 @@ func (r *Repository) GetCurrentRound(
 			status,
 			started_at,
 			ended_at,
-			created_at
+			created_at, betting_opened_at, betting_closes_at, growth_rate, house_edge
 		FROM game_rounds
 		WHERE status IN (
 			'CREATED',
@@ -262,7 +264,7 @@ func (r *Repository) GetCurrentRound(
 		&round.Status,
 		&round.StartedAt,
 		&round.EndedAt,
-		&round.CreatedAt,
+		&round.CreatedAt, &round.BettingOpenedAt, &round.BettingClosesAt, &round.GrowthRate, &round.HouseEdge,
 	)
 
 	if err != nil {
@@ -284,7 +286,7 @@ func (r *Repository) UpdateStatus(
 	id int64,
 	status RoundStatus,
 ) error {
-	commandTag, err := r.db.Exec(ctx, `
+	commandTag, err := database.Query(ctx, r.db).Exec(ctx, `
 		UPDATE game_rounds
 		SET status = $1
 		WHERE id = $2
@@ -314,12 +316,12 @@ func (r *Repository) StartRound(
 	ctx context.Context,
 	id int64,
 ) error {
-	commandTag, err := r.db.Exec(ctx, `
+	commandTag, err := database.Query(ctx, r.db).Exec(ctx, `
 		UPDATE game_rounds
 		SET
 			status = $1,
 			started_at = NOW()
-		WHERE id = $2
+		WHERE id = $2 AND status='BETTING_CLOSED'
 	`,
 		RoundRunning,
 		id,
@@ -346,12 +348,12 @@ func (r *Repository) CrashRound(
 	ctx context.Context,
 	id int64,
 ) error {
-	commandTag, err := r.db.Exec(ctx, `
+	commandTag, err := database.Query(ctx, r.db).Exec(ctx, `
 		UPDATE game_rounds
 		SET
 			status = $1,
 			ended_at = NOW()
-		WHERE id = $2
+		WHERE id = $2 AND status='RUNNING'
 	`,
 		RoundCrashed,
 		id,
@@ -378,7 +380,7 @@ func (r *Repository) SettleRound(
 	ctx context.Context,
 	id int64,
 ) error {
-	commandTag, err := r.db.Exec(ctx, `
+	commandTag, err := database.Query(ctx, r.db).Exec(ctx, `
 		UPDATE game_rounds
 		SET status = $1
 		WHERE id = $2
@@ -412,7 +414,7 @@ func (r *Repository) SetCrashPoint(
 	var round GameRound
 	var crashPointString string
 
-	err := r.db.QueryRow(
+	err := database.Query(ctx, r.db).QueryRow(
 		ctx,
 		`
 		UPDATE game_rounds
@@ -429,7 +431,7 @@ func (r *Repository) SetCrashPoint(
 			status,
 			started_at,
 			ended_at,
-			created_at
+			created_at, betting_opened_at, betting_closes_at, growth_rate, house_edge
 		`,
 		id,
 		crashPoint.String(),
@@ -444,7 +446,7 @@ func (r *Repository) SetCrashPoint(
 		&round.Status,
 		&round.StartedAt,
 		&round.EndedAt,
-		&round.CreatedAt,
+		&round.CreatedAt, &round.BettingOpenedAt, &round.BettingClosesAt, &round.GrowthRate, &round.HouseEdge,
 	)
 
 	if err != nil {

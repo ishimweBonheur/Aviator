@@ -1,6 +1,8 @@
 package betting
 
 import (
+	"aviator/backend/internal/realtime"
+	"aviator/backend/internal/risk"
 	"aviator/backend/internal/wallet"
 	"context"
 	"fmt"
@@ -12,6 +14,8 @@ import (
 const MinimumBet = 50
 
 type Service struct {
+	publisher     realtime.Publisher
+	limits        risk.Limits
 	db            *pgxpool.Pool
 	repository    *Repository
 	walletService *wallet.Service
@@ -23,6 +27,7 @@ func NewService(
 	walletService *wallet.Service,
 ) *Service {
 	return &Service{
+		limits:        risk.Default(),
 		db:            db,
 		repository:    repository,
 		walletService: walletService,
@@ -48,6 +53,9 @@ func (s *Service) PlaceBet(
 		return nil, fmt.Errorf("bet number must be 1 or 2")
 	}
 
+	if err := risk.Amount("bet", amount, s.limits.MinBet, s.limits.MaxBet); err != nil {
+		return nil, err
+	}
 	minimum := decimal.NewFromInt(MinimumBet)
 
 	if amount.LessThan(minimum) {
@@ -121,6 +129,13 @@ func (s *Service) PlaceBet(
 		return nil, err
 	}
 
+	roundStatus, err = s.repository.GetRoundStatus(ctx, tx, roundID)
+	if err != nil {
+		return nil, err
+	}
+	if roundStatus != "BETTING_OPEN" {
+		return nil, fmt.Errorf("betting is closed")
+	}
 	bet, err := s.repository.CreateBet(
 		ctx,
 		tx,
@@ -140,5 +155,8 @@ func (s *Service) PlaceBet(
 		)
 	}
 
+	s.publish(ctx, realtime.EventBetPlaced, roundID, bet.ID, amount.StringFixed(2))
 	return bet, nil
 }
+
+func (s *Service) SetLimits(limits risk.Limits) { s.limits = limits }

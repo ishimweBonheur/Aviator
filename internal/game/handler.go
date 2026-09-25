@@ -24,7 +24,6 @@ func NewHandler(service *Service) *Handler {
 // @Produce json
 // @Success 201 {object} GameRound
 // @Failure 400 {object} map[string]string
-// @Router /api/game/rounds [post]
 func (h *Handler) CreateRound(w http.ResponseWriter, r *http.Request) {
 	round, err := h.service.CreateRound(r.Context())
 	if err != nil {
@@ -37,29 +36,14 @@ func (h *Handler) CreateRound(w http.ResponseWriter, r *http.Request) {
 
 // GetCurrentRound returns the active game round.
 // @Summary Get current game round
-// @Description Returns the latest active game round, if one exists.
+// @Description Returns running and upcoming rounds, server time and live multiplier; future secrets are redacted.
 // @Tags game
 // @Produce json
-// @Success 200 {object} GameRound
+// @Success 200 {object} Snapshot
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /api/game/rounds/current [get]
-func (h *Handler) GetCurrentRound(w http.ResponseWriter, r *http.Request) {
-	round, err := h.service.repository.GetCurrentRound(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if round == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error": "no active round",
-		})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, round)
-}
+func (h *Handler) GetCurrentRound(w http.ResponseWriter, r *http.Request) { h.snapshot(w, r) }
 
 // GetRound returns a game round by ID.
 // @Summary Get game round
@@ -84,7 +68,7 @@ func (h *Handler) GetRound(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, "round not found")
 		return
 	}
 
@@ -99,7 +83,6 @@ func (h *Handler) GetRound(w http.ResponseWriter, r *http.Request) {
 // @Param id path int true "Round ID"
 // @Success 200 {object} GameRound
 // @Failure 400 {object} map[string]string
-// @Router /api/game/rounds/{id}/open [post]
 func (h *Handler) OpenBetting(w http.ResponseWriter, r *http.Request) {
 	id, err := getRoundID(r)
 	if err != nil {
@@ -128,7 +111,6 @@ func (h *Handler) OpenBetting(w http.ResponseWriter, r *http.Request) {
 // @Param id path int true "Round ID"
 // @Success 200 {object} GameRound
 // @Failure 400 {object} map[string]string
-// @Router /api/game/rounds/{id}/close [post]
 func (h *Handler) CloseBetting(w http.ResponseWriter, r *http.Request) {
 	id, err := getRoundID(r)
 	if err != nil {
@@ -157,7 +139,6 @@ func (h *Handler) CloseBetting(w http.ResponseWriter, r *http.Request) {
 // @Param id path int true "Round ID"
 // @Success 200 {object} GameRound
 // @Failure 400 {object} map[string]string
-// @Router /api/game/rounds/{id}/start [post]
 func (h *Handler) StartRound(w http.ResponseWriter, r *http.Request) {
 	id, err := getRoundID(r)
 	if err != nil {
@@ -186,7 +167,6 @@ func (h *Handler) StartRound(w http.ResponseWriter, r *http.Request) {
 // @Param id path int true "Round ID"
 // @Success 200 {object} GameRound
 // @Failure 400 {object} map[string]string
-// @Router /api/game/rounds/{id}/crash [post]
 func (h *Handler) CrashRound(w http.ResponseWriter, r *http.Request) {
 	id, err := getRoundID(r)
 	if err != nil {
@@ -215,7 +195,6 @@ func (h *Handler) CrashRound(w http.ResponseWriter, r *http.Request) {
 // @Param id path int true "Round ID"
 // @Success 200 {object} GameRound
 // @Failure 400 {object} map[string]string
-// @Router /api/game/rounds/{id}/settle [post]
 func (h *Handler) SettleRound(w http.ResponseWriter, r *http.Request) {
 	id, err := getRoundID(r)
 	if err != nil {

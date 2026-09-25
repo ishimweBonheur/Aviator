@@ -102,6 +102,32 @@ const docTemplate = `{
             }
         },
         "/api/bets": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "betting"
+                ],
+                "summary": "List own bets (latest 200)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": true
+                            }
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
@@ -153,7 +179,49 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/bets/{bet_id}": {
+        "/api/bets/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "betting"
+                ],
+                "summary": "Cancel an active bet while betting is open",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Bet ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/betting.CancelResult"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/bets/{id}/cashout": {
             "post": {
                 "security": [
                     {
@@ -175,7 +243,7 @@ const docTemplate = `{
                     {
                         "type": "integer",
                         "description": "Bet ID",
-                        "name": "bet_id",
+                        "name": "id",
                         "in": "path",
                         "required": true
                     }
@@ -316,28 +384,21 @@ const docTemplate = `{
             }
         },
         "/api/game/rounds": {
-            "post": {
-                "description": "Creates a new game round when no other round is active.",
+            "get": {
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "game"
                 ],
-                "summary": "Create game round",
+                "summary": "List recent completed rounds (latest 50)",
                 "responses": {
-                    "201": {
-                        "description": "Created",
+                    "200": {
+                        "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/game.GameRound"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/game.GameRound"
                             }
                         }
                     }
@@ -346,7 +407,7 @@ const docTemplate = `{
         },
         "/api/game/rounds/current": {
             "get": {
-                "description": "Returns the latest active game round, if one exists.",
+                "description": "Returns running and upcoming rounds, server time and live multiplier; future secrets are redacted.",
                 "produces": [
                     "application/json"
                 ],
@@ -358,7 +419,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/game.GameRound"
+                            "$ref": "#/definitions/game.Snapshot"
                         }
                     },
                     "404": {
@@ -429,16 +490,15 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/game/rounds/{id}/close": {
-            "post": {
-                "description": "Moves a game round from BETTING_OPEN to BETTING_CLOSED.",
+        "/api/game/rounds/{id}/fairness": {
+            "get": {
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "game"
                 ],
-                "summary": "Close betting",
+                "summary": "Get round fairness commitment or completed reveal",
                 "parameters": [
                     {
                         "type": "integer",
@@ -454,204 +514,24 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/game.GameRound"
                         }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
                     }
                 }
             }
         },
-        "/api/game/rounds/{id}/crash": {
-            "post": {
-                "description": "Moves a game round from RUNNING to CRASHED.",
+        "/api/limits": {
+            "get": {
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "game"
                 ],
-                "summary": "Crash game round",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Round ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
+                "summary": "Get configured betting and wallet limits",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/game.GameRound"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/game/rounds/{id}/open": {
-            "post": {
-                "description": "Moves a game round from CREATED to BETTING_OPEN.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "game"
-                ],
-                "summary": "Open betting",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Round ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/game.GameRound"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/game/rounds/{id}/settle": {
-            "post": {
-                "description": "Moves a game round from CRASHED to SETTLED.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "game"
-                ],
-                "summary": "Settle game round",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Round ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/game.GameRound"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/game/rounds/{id}/start": {
-            "post": {
-                "description": "Moves a game round from BETTING_CLOSED to RUNNING.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "game"
-                ],
-                "summary": "Start game round",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Round ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/game.GameRound"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/settlement/rounds/{id}/settle": {
-            "post": {
-                "description": "Marks a crashed round as settled and resolves any active bets.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "settlement"
-                ],
-                "summary": "Settle game round",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Round ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/settlement.Result"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/risk.Limits"
                         }
                     }
                 }
@@ -689,6 +569,34 @@ const docTemplate = `{
                         "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/auth.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/wallet/transactions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "wallet"
+                ],
+                "summary": "List own wallet transactions (latest 200)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": true
+                            }
                         }
                     }
                 }
@@ -811,6 +719,23 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/ws": {
+            "get": {
+                "description": "WebSocket upgrade required. Events and reconnect snapshot flow are documented in LOCAL_SYSTEM.md.",
+                "tags": [
+                    "realtime"
+                ],
+                "summary": "Connect to realtime game events",
+                "responses": {
+                    "101": {
+                        "description": "Switching Protocols",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -898,6 +823,23 @@ const docTemplate = `{
                 }
             }
         },
+        "betting.CancelResult": {
+            "type": "object",
+            "properties": {
+                "bet_id": {
+                    "type": "integer"
+                },
+                "refunded_amount": {
+                    "type": "string"
+                },
+                "remaining_balance": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
         "betting.PlaceBetRequest": {
             "type": "object",
             "properties": {
@@ -939,9 +881,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider": {
-                    "type": "string"
-                },
-                "provider_reference": {
                     "type": "string"
                 }
             }
@@ -995,6 +934,12 @@ const docTemplate = `{
         "game.GameRound": {
             "type": "object",
             "properties": {
+                "betting_closes_at": {
+                    "type": "string"
+                },
+                "betting_opened_at": {
+                    "type": "string"
+                },
                 "client_seed": {
                     "type": "string"
                 },
@@ -1006,6 +951,9 @@ const docTemplate = `{
                 },
                 "ended_at": {
                     "type": "string"
+                },
+                "house_edge": {
+                    "type": "number"
                 },
                 "id": {
                     "type": "integer"
@@ -1048,6 +996,49 @@ const docTemplate = `{
                 "RoundCrashed",
                 "RoundSettled"
             ]
+        },
+        "game.Snapshot": {
+            "type": "object",
+            "properties": {
+                "current_multiplier": {
+                    "type": "string"
+                },
+                "running": {
+                    "$ref": "#/definitions/game.GameRound"
+                },
+                "server_time": {
+                    "type": "string"
+                },
+                "upcoming": {
+                    "$ref": "#/definitions/game.GameRound"
+                }
+            }
+        },
+        "risk.Limits": {
+            "type": "object",
+            "properties": {
+                "maxBet": {
+                    "type": "number"
+                },
+                "maxDeposit": {
+                    "type": "number"
+                },
+                "maxPayout": {
+                    "type": "number"
+                },
+                "maxWithdrawal": {
+                    "type": "number"
+                },
+                "minBet": {
+                    "type": "number"
+                },
+                "minDeposit": {
+                    "type": "number"
+                },
+                "minWithdrawal": {
+                    "type": "number"
+                }
+            }
         },
         "settlement.Result": {
             "type": "object",

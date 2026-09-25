@@ -4,12 +4,14 @@ import (
 	_ "aviator/backend/docs"
 	"aviator/backend/internal/auth"
 	"aviator/backend/internal/betting"
+	"aviator/backend/internal/cache"
 	"aviator/backend/internal/cashout"
 	"aviator/backend/internal/config"
 	"aviator/backend/internal/database"
 	"aviator/backend/internal/deposit"
 	"aviator/backend/internal/fairness"
 	"aviator/backend/internal/game"
+	"aviator/backend/internal/history"
 	"aviator/backend/internal/multiplier"
 	"aviator/backend/internal/realtime"
 	"aviator/backend/internal/settlement"
@@ -18,6 +20,10 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/shopspring/decimal"
 	httpSwagger "github.com/swaggo/http-swagger"
@@ -71,6 +77,8 @@ func main() {
 	// ============================================================
 
 	cfg := config.Load()
+	store := cache.New(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+	defer store.Close()
 
 	// ============================================================
 	// PostgreSQL
@@ -249,10 +257,6 @@ func main() {
 		settlementRepository,
 	)
 
-	settlementHandler := settlement.NewHandler(
-		settlementService,
-	)
-
 	// ============================================================
 	// Realtime / WebSocket
 	// ============================================================
@@ -269,20 +273,29 @@ func main() {
 	// Game Engine
 	// ============================================================
 
+	depositService.SetLimits(cfg.Limits)
+	withdrawalService.SetLimits(cfg.Limits)
+	bettingService.SetLimits(cfg.Limits)
+	cashoutService.SetLimits(cfg.Limits)
+	bettingService.SetPublisher(store)
+	cashoutService.SetPublisher(store)
 	gameEngine := game.NewEngine(
 		gameService,
 		multiplierService,
 		settlementService,
-		realtimeHub,
+		store, store, cfg.BettingWindow, cfg.GrowthRate,
 	)
 
-	ctx, cancel := context.WithCancel(
-		context.Background(),
+	ctx, cancel := signal.NotifyContext(
+		context.Background(), os.Interrupt, syscall.SIGTERM,
 	)
 
 	defer cancel()
 
-	go gameEngine.Run(ctx)
+	go store.Subscribe(ctx, realtimeHub)
+	engineDone := make(chan struct{})
+	go func() { defer close(engineDone); store.Lead(ctx, gameEngine.Run) }()
+	defer func() { cancel(); <-engineDone }()
 
 	// ============================================================
 	// Router
@@ -313,12 +326,12 @@ func main() {
 	// ============================================================
 
 	mux.HandleFunc(
-		"/api/auth/register",
+		"POST /api/auth/register",
 		authHandler.Register,
 	)
 
 	mux.HandleFunc(
-		"/api/auth/login",
+		"POST /api/auth/login",
 		authHandler.Login,
 	)
 
@@ -351,6 +364,15 @@ func main() {
 		),
 	)
 
+	mux.Handle(
+		"/api/deposits/{$}",
+		authService.Middleware(
+			http.HandlerFunc(
+				depositHandler.Handle,
+			),
+		),
+	)
+
 	// ============================================================
 	// Protected Withdrawal Routes
 	//
@@ -367,12 +389,21 @@ func main() {
 		),
 	)
 
+	mux.Handle(
+		"/api/withdrawals/{$}",
+		authService.Middleware(
+			http.HandlerFunc(
+				withdrawalHandler.Handle,
+			),
+		),
+	)
+
 	// ============================================================
 	// Protected Betting Routes
 	// ============================================================
 
 	mux.Handle(
-		"/api/bets",
+		"POST /api/bets",
 		authService.Middleware(
 			http.HandlerFunc(
 				bettingHandler.PlaceBet,
@@ -380,157 +411,18 @@ func main() {
 		),
 	)
 
-	// ============================================================
-	// Protected Cashout Route
-	//
-	// Example:
-	// POST /api/bets/123
-	// ============================================================
-
-	mux.Handle(
-		"/api/bets/",
-		authService.Middleware(
-			http.HandlerFunc(
-				cashoutHandler.CashOut,
-			),
-		),
-	)
-
-	// ============================================================
-	// Settlement Routes
-	// ============================================================
-
-	mux.HandleFunc(
-		"/api/settlement/rounds/",
-		func(
-			w http.ResponseWriter,
-			r *http.Request,
-		) {
-			switch r.Method {
-
-			case http.MethodPost:
-				switch {
-
-				case hasSuffix(
-					r.URL.Path,
-					"/settle",
-				):
-					settlementHandler.SettleRound(
-						w,
-						r,
-					)
-
-				default:
-					http.NotFound(
-						w,
-						r,
-					)
-				}
-
-			default:
-				http.Error(
-					w,
-					"method not allowed",
-					http.StatusMethodNotAllowed,
-				)
-			}
-		},
-	)
-
-	// ============================================================
-	// Game Routes
-	// ============================================================
-
-	mux.HandleFunc(
-		"/api/game/rounds",
-		gameHandler.CreateRound,
-	)
-
-	mux.HandleFunc(
-		"/api/game/rounds/current",
-		gameHandler.GetCurrentRound,
-	)
-
-	mux.HandleFunc(
-		"/api/game/rounds/",
-		func(
-			w http.ResponseWriter,
-			r *http.Request,
-		) {
-			switch r.Method {
-
-			case http.MethodGet:
-				gameHandler.GetRound(
-					w,
-					r,
-				)
-
-			case http.MethodPost:
-				switch {
-
-				case hasSuffix(
-					r.URL.Path,
-					"/open",
-				):
-					gameHandler.OpenBetting(
-						w,
-						r,
-					)
-
-				case hasSuffix(
-					r.URL.Path,
-					"/close",
-				):
-					gameHandler.CloseBetting(
-						w,
-						r,
-					)
-
-				case hasSuffix(
-					r.URL.Path,
-					"/start",
-				):
-					gameHandler.StartRound(
-						w,
-						r,
-					)
-
-				case hasSuffix(
-					r.URL.Path,
-					"/crash",
-				):
-					gameHandler.CrashRound(
-						w,
-						r,
-					)
-
-				case hasSuffix(
-					r.URL.Path,
-					"/settle",
-				):
-					gameHandler.SettleRound(
-						w,
-						r,
-					)
-
-				default:
-					http.NotFound(
-						w,
-						r,
-					)
-				}
-
-			default:
-				http.Error(
-					w,
-					"method not allowed",
-					http.StatusMethodNotAllowed,
-				)
-			}
-		},
-	)
-
-	// ============================================================
+	// Public reads and authenticated player commands. Lifecycle mutations are
+	// deliberately unregistered; only the fenced engine invokes their services.
+	mux.Handle("POST /api/bets/{id}/cashout", authService.Middleware(store.SuppressDuplicates(http.HandlerFunc(cashoutHandler.CashOut))))
+	mux.Handle("POST /api/bets/{id}/cancel", authService.Middleware(store.SuppressDuplicates(http.HandlerFunc(bettingHandler.Cancel))))
+	mux.HandleFunc("GET /api/game/rounds/current", gameHandler.GetCurrentRound)
+	mux.HandleFunc("GET /api/game/rounds/{id}", gameHandler.GetRound)
+	mux.HandleFunc("GET /api/game/rounds/{id}/fairness", gameHandler.Fairness)
+	histories := history.NewHandler(db)
+	mux.Handle("GET /api/bets", authService.Middleware(http.HandlerFunc(histories.Bets)))
+	mux.Handle("GET /api/wallet/transactions", authService.Middleware(http.HandlerFunc(histories.Transactions)))
+	mux.HandleFunc("GET /api/game/rounds", gameHandler.Recent)
+	mux.Handle("GET /api/limits", cfg.Limits)
 	// Swagger
 	// ============================================================
 
@@ -550,21 +442,14 @@ func main() {
 		addr,
 	)
 
-	if err := http.ListenAndServe(
-		addr,
-		mux,
-	); err != nil {
-		log.Fatal(err)
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		<-ctx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdown)
+	}()
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("HTTP server: %v", err)
 	}
-}
-
-func hasSuffix(
-	path string,
-	suffix string,
-) bool {
-	if len(path) < len(suffix) {
-		return false
-	}
-
-	return path[len(path)-len(suffix):] == suffix
 }

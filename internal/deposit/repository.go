@@ -72,7 +72,12 @@ func (r *Repository) Create(
 	provider string,
 	providerReference string,
 ) (*Deposit, error) {
-	row := r.db.QueryRow(
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	row := tx.QueryRow(
 		ctx,
 		`
 		INSERT INTO deposits (
@@ -107,6 +112,15 @@ func (r *Repository) Create(
 		)
 	}
 
+	if provider == string(ProviderSandbox) {
+		deposit, err = r.completeTx(ctx, tx, provider, providerReference)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return deposit, nil
 }
 
@@ -182,7 +196,17 @@ func (r *Repository) CompleteByProviderReference(
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	deposit, err := r.completeTx(ctx, tx, provider, providerReference)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return deposit, nil
+}
 
+func (r *Repository) completeTx(ctx context.Context, tx pgx.Tx, provider, providerReference string) (*Deposit, error) {
 	row := tx.QueryRow(
 		ctx,
 		`
@@ -310,10 +334,6 @@ func (r *Repository) CompleteByProviderReference(
 
 	deposit.Status = StatusCompleted
 	deposit.CompletedAt = &completedAt
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
 
 	return deposit, nil
 }

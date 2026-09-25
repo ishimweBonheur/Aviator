@@ -2,14 +2,20 @@ package cashout
 
 import (
 	"aviator/backend/internal/multiplier"
+	"aviator/backend/internal/realtime"
+	"aviator/backend/internal/risk"
 	"aviator/backend/internal/wallet"
 	"context"
 	"fmt"
+	"github.com/shopspring/decimal"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Service struct {
+	publisher         realtime.Publisher
+	limits            risk.Limits
 	db                *pgxpool.Pool
 	repository        *Repository
 	walletService     *wallet.Service
@@ -23,6 +29,7 @@ func NewService(
 	multiplierService *multiplier.Service,
 ) *Service {
 	return &Service{
+		limits:            risk.Default(),
 		db:                db,
 		repository:        repository,
 		walletService:     walletService,
@@ -54,6 +61,17 @@ func (s *Service) CashOut(
 
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	var roundID int64
+	if err := tx.QueryRow(ctx, "SELECT round_id FROM bets WHERE id=$1 AND user_id=$2", betID, userID).Scan(&roundID); err != nil {
+		return nil, fmt.Errorf("bet not found")
+	}
+	var roundStatus string
+	var started *time.Time
+	var point *decimal.Decimal
+	var rate float64
+	if err := tx.QueryRow(ctx, "SELECT status, started_at, crash_point, growth_rate FROM game_rounds WHERE id=$1 FOR SHARE", roundID).Scan(&roundStatus, &started, &point, &rate); err != nil {
+		return nil, fmt.Errorf("failed to load round: %w", err)
+	}
 	bet, err := s.repository.GetActiveBetForUpdate(
 		ctx,
 		tx,
@@ -70,33 +88,31 @@ func (s *Service) CashOut(
 		)
 	}
 
-	roundStatus, err := s.repository.GetRoundStatus(
-		ctx,
-		tx,
-		bet.RoundID,
-	)
-	if err != nil {
-		return nil, err
-	}
-
 	if roundStatus != "RUNNING" {
 		return nil, fmt.Errorf(
 			"cashout is only allowed while the round is running",
 		)
 	}
 
-	currentMultiplier, err := s.multiplierService.Current(
-		bet.RoundID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"multiplier is not currently running: %w",
-			err,
-		)
+	if started == nil || point == nil {
+		return nil, fmt.Errorf("invalid round timing")
 	}
-
+	clock := multiplier.Clock{Rate: rate}
+	// Evaluate at processing time after acquiring every contended money lock.
+	var lockedUser int64
+	if err := tx.QueryRow(ctx, "SELECT id FROM users WHERE id=$1 FOR UPDATE", userID).Scan(&lockedUser); err != nil {
+		return nil, fmt.Errorf("failed to lock wallet: %w", err)
+	}
+	now := time.Now()
+	currentMultiplier, err := clock.CashoutMultiplier(*started, now, *point)
+	if err != nil {
+		return nil, err
+	}
 	payout := bet.Amount.Mul(currentMultiplier).Round(2)
 
+	if payout.GreaterThan(s.limits.MaxPayout) {
+		payout = s.limits.MaxPayout
+	}
 	reference := fmt.Sprintf(
 		"WIN-BET-%d",
 		bet.ID,
@@ -125,6 +141,10 @@ func (s *Service) CashOut(
 		return nil, err
 	}
 
+	var balance decimal.Decimal
+	if err := tx.QueryRow(ctx, "SELECT balance FROM users WHERE id=$1", userID).Scan(&balance); err != nil {
+		return nil, fmt.Errorf("failed to read balance: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf(
 			"failed to commit cashout: %w",
@@ -132,14 +152,12 @@ func (s *Service) CashOut(
 		)
 	}
 
-	balance, err := s.walletService.GetBalance(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"cashout completed but failed to read balance: %w",
-			err,
-		)
+	if s.publisher != nil {
+		var number int64
+		if err := s.db.QueryRow(ctx, "SELECT round_number FROM game_rounds WHERE id=$1", bet.RoundID).Scan(&number); err == nil {
+			s.publisher.Publish(ctx, realtime.Event{Type: realtime.EventBetCashedOut, RoundID: bet.RoundID, RoundNumber: number, BetID: bet.ID, Multiplier: currentMultiplier.StringFixed(2), Payout: payout.StringFixed(2)})
+		}
 	}
-
 	return &CashoutResponse{
 		BetID:            bet.ID,
 		Multiplier:       currentMultiplier,
@@ -148,3 +166,7 @@ func (s *Service) CashOut(
 		RemainingBalance: balance,
 	}, nil
 }
+
+func (s *Service) SetLimits(limits risk.Limits) { s.limits = limits }
+
+func (s *Service) SetPublisher(p realtime.Publisher) { s.publisher = p }

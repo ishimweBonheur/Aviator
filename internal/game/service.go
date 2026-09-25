@@ -62,7 +62,7 @@ func (s *Service) CreateRound(ctx context.Context) (*GameRound, error) {
 		serverSeedHash,
 		serverSeed,
 		clientSeed,
-		roundNumber,
+		roundNumber, s.fairnessService.HouseEdge(),
 	)
 
 	if err != nil {
@@ -210,7 +210,11 @@ func (s *Service) GenerateCrashPoint(
 		return nil, fmt.Errorf("server seed is missing")
 	}
 
-	result, err := s.fairnessService.GenerateCrashPoint(
+	fairnessService := s.fairnessService
+	if round.HouseEdge != nil {
+		fairnessService = fairness.NewService(fairness.Config{HouseEdge: *round.HouseEdge})
+	}
+	result, err := fairnessService.GenerateCrashPoint(
 		*round.ServerSeed,
 		round.ClientSeed,
 		round.Nonce,

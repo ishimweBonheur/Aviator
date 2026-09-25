@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"aviator/backend/internal/httpapi"
 	"context"
 	"errors"
 	"net/http"
@@ -19,7 +20,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		authHeader := r.Header.Get("Authorization")
 
 		if authHeader == "" {
-			http.Error(
+			httpapi.Error(
 				w,
 				"authorization required",
 				http.StatusUnauthorized,
@@ -37,7 +38,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 
 		if len(parts) == 2 {
 			if !strings.EqualFold(parts[0], "Bearer") {
-				http.Error(
+				httpapi.Error(
 					w,
 					"invalid authorization header",
 					http.StatusUnauthorized,
@@ -49,7 +50,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		}
 
 		if tokenString == "" {
-			http.Error(
+			httpapi.Error(
 				w,
 				"invalid authorization token",
 				http.StatusUnauthorized,
@@ -69,7 +70,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		)
 
 		if err != nil || !token.Valid {
-			http.Error(
+			httpapi.Error(
 				w,
 				"invalid or expired token",
 				http.StatusUnauthorized,
@@ -80,7 +81,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		claims, ok := token.Claims.(jwt.MapClaims)
 
 		if !ok {
-			http.Error(
+			httpapi.Error(
 				w,
 				"invalid token claims",
 				http.StatusUnauthorized,
@@ -91,7 +92,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		userIDFloat, ok := claims["user_id"].(float64)
 
 		if !ok {
-			http.Error(
+			httpapi.Error(
 				w,
 				"invalid user id",
 				http.StatusUnauthorized,
