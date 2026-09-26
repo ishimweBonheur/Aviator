@@ -65,12 +65,15 @@ func (h *Handler) Recent(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
 	repo := h.service.repository
-	tx, err := repo.db.BeginTx(r.Context(), pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	tx, err := repo.db.BeginTx(r.Context(), pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
 	if err != nil {
 		writeError(w, 500, "failed to load snapshot")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	r = r.WithContext(database.WithQuery(r.Context(), tx))
 	running, err := repo.GetRunningRound(r.Context())
 	if err != nil {
@@ -90,6 +93,10 @@ func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
 			m = *running.CrashPoint
 		}
 		result.CurrentMultiplier = m.StringFixed(2)
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "failed to load snapshot")
+		return
 	}
 	writeJSON(w, 200, result)
 }

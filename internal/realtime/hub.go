@@ -17,6 +17,8 @@ func NewHub() *Hub {
 	return &Hub{clients: make(map[*Client]struct{})}
 }
 
+func (h *Hub) ClientCount() int { h.mu.Lock(); defer h.mu.Unlock(); return len(h.clients) }
+
 func (h *Hub) Register(c *Client) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()

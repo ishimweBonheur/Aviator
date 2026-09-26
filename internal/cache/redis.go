@@ -23,6 +23,22 @@ func New(addr, password string, db int) *Store {
 	return &Store{redis.NewClient(&redis.Options{Addr: addr, Password: password, DB: db, DialTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second, MaxRetries: -1, ContextTimeoutEnabled: true})}
 }
 func (s *Store) Close() error { return s.client.Close() }
+
+func (s *Store) AdminStatus(ctx context.Context) map[string]any {
+	result := map[string]any{"redis": "ok", "engine_leader_present": false}
+	if s.client.Ping(ctx).Err() != nil {
+		result["redis"] = "unavailable"
+		result["engine_leader_present"] = nil
+		return result
+	}
+	n, err := s.client.Exists(ctx, leaderKey).Result()
+	if err != nil {
+		result["engine_leader_present"] = nil
+	} else {
+		result["engine_leader_present"] = n == 1
+	}
+	return result
+}
 func (s *Store) Publish(ctx context.Context, event realtime.Event) {
 	event.Timestamp = time.Now().UTC()
 	data, err := json.Marshal(event)

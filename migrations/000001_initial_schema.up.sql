@@ -3,6 +3,7 @@ CREATE TABLE users (
     id BIGSERIAL PRIMARY KEY,
     username VARCHAR(50) NOT NULL UNIQUE,
     email VARCHAR(255) NOT NULL UNIQUE,
+    role VARCHAR(20) NOT NULL DEFAULT 'PLAYER' CHECK (role IN ('PLAYER', 'ADMIN')),
     password_hash TEXT NOT NULL,
     balance NUMERIC(18, 2) NOT NULL DEFAULT 0.00 CHECK (balance >= 0.00),
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (
@@ -38,6 +39,10 @@ CREATE TABLE game_rounds (
     ),
     started_at TIMESTAMPTZ,
     ended_at TIMESTAMPTZ,
+    betting_opened_at TIMESTAMPTZ,
+    betting_closes_at TIMESTAMPTZ,
+    growth_rate DOUBLE PRECISION NOT NULL DEFAULT 0.08 CHECK (growth_rate > 0 AND growth_rate < 100),
+    house_edge NUMERIC,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -139,6 +144,17 @@ CREATE TABLE game_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- ADMIN AUDIT LOGS
+CREATE TABLE admin_audit_logs (
+    id BIGSERIAL PRIMARY KEY,
+    admin_id BIGINT NOT NULL REFERENCES users(id),
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    action TEXT NOT NULL,
+    reference TEXT UNIQUE,
+    details JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- INDEXES
 -- Bets
 CREATE INDEX idx_bets_round_id ON bets(round_id);
@@ -175,3 +191,7 @@ CREATE INDEX idx_game_events_created_at ON game_events(created_at);
 CREATE INDEX idx_game_rounds_status ON game_rounds(status);
 
 CREATE INDEX idx_game_rounds_created_at ON game_rounds(created_at);
+
+CREATE UNIQUE INDEX one_running_round ON game_rounds ((1)) WHERE status = 'RUNNING';
+
+CREATE UNIQUE INDEX one_upcoming_round ON game_rounds ((1)) WHERE status IN ('CREATED', 'BETTING_OPEN', 'BETTING_CLOSED');

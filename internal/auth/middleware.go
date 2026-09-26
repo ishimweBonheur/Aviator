@@ -101,6 +101,15 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		}
 
 		userID := int64(userIDFloat)
+		var status string
+		if err := s.db.QueryRow(r.Context(), "SELECT status FROM users WHERE id=$1", userID).Scan(&status); err != nil {
+			httpapi.Error(w, "account unavailable", http.StatusUnauthorized)
+			return
+		}
+		if status != "ACTIVE" {
+			httpapi.Error(w, "account is not active", http.StatusForbidden)
+			return
+		}
 
 		ctx := context.WithValue(
 			r.Context(),
@@ -119,4 +128,26 @@ func UserIDFromContext(ctx context.Context) (int64, bool) {
 	userID, ok := ctx.Value(userIDKey).(int64)
 
 	return userID, ok
+}
+
+// RequireAdmin checks the current database role on every request, so revocation
+// takes effect for existing sessions as well as new logins.
+func (s *Service) RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := UserIDFromContext(r.Context())
+		if !ok {
+			httpapi.Error(w, "authorization required", 401)
+			return
+		}
+		var role, status string
+		if err := s.db.QueryRow(r.Context(), "SELECT role,status FROM users WHERE id=$1", id).Scan(&role, &status); err != nil {
+			httpapi.Error(w, "account unavailable", 503)
+			return
+		}
+		if role != "ADMIN" || status != "ACTIVE" {
+			httpapi.Error(w, "administrator access required", 403)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

@@ -1,5 +1,134 @@
 basePath: /
 definitions:
+  admin.AdjustmentRequest:
+    properties:
+      amount:
+        type: string
+      direction:
+        type: string
+      reason:
+        type: string
+      reference:
+        type: string
+    type: object
+  admin.AnalyticsResponse:
+    properties:
+      active_players:
+        type: integer
+      bet_count:
+        type: integer
+      daily:
+        items:
+          $ref: '#/definitions/admin.DailyMetrics'
+        type: array
+      deposits:
+        example: "120000.00"
+        type: string
+      ggr:
+        example: "6000.00"
+        type: string
+      house_margin_percent:
+        example: "6.00"
+        type: string
+      rtp_percent:
+        example: "94.00"
+        type: string
+      total_payouts:
+        example: "94000.00"
+        type: string
+      total_wagered:
+        example: "100000.00"
+        type: string
+      withdrawals:
+        example: "30000.00"
+        type: string
+    type: object
+  admin.DailyMetrics:
+    properties:
+      active_players:
+        type: integer
+      bet_count:
+        type: integer
+      day:
+        example: "2026-09-26"
+        type: string
+      deposits:
+        type: string
+      ggr:
+        example: "6000.00"
+        type: string
+      payouts:
+        example: "94000.00"
+        type: string
+      rtp_percent:
+        example: "94.00"
+        type: string
+      wagered:
+        example: "100000.00"
+        type: string
+      withdrawals:
+        type: string
+    type: object
+  admin.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  admin.OverviewResponse:
+    properties:
+      active_bets:
+        type: integer
+      active_players:
+        type: integer
+      active_users:
+        type: integer
+      bet_count:
+        type: integer
+      deposits:
+        type: string
+      ggr:
+        type: string
+      house_margin_percent:
+        type: string
+      pending_deposits:
+        type: integer
+      pending_withdrawals:
+        type: integer
+      rtp_percent:
+        type: string
+      total_payouts:
+        type: string
+      total_player_balances:
+        example: "450000.00"
+        type: string
+      total_users:
+        type: integer
+      total_wagered:
+        type: string
+      withdrawals:
+        type: string
+    type: object
+  admin.Page:
+    properties:
+      items:
+        items:
+          additionalProperties: {}
+          type: object
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  admin.StatusRequest:
+    properties:
+      reason:
+        type: string
+      status:
+        type: string
+    type: object
   auth.ErrorResponse:
     properties:
       error:
@@ -55,6 +184,8 @@ definitions:
       id:
         format: int64
         type: integer
+      role:
+        type: string
       username:
         type: string
     type: object
@@ -279,6 +410,907 @@ info:
   title: Aviator Backend API
   version: "1.0"
 paths:
+  /api/admin/analytics:
+    get:
+      description: Requires an active ADMIN role. Analytics use settled rounds, exclude
+        cancelled bets, and bucket days in UTC.
+      parameters:
+      - description: Inclusive RFC3339 timestamp
+        in: query
+        name: from
+        type: string
+      - description: Exclusive RFC3339 timestamp
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/admin.AnalyticsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Admin Analytics
+      tags:
+      - admin
+  /api/admin/bets:
+    get:
+      description: Requires ADMIN. Amounts are decimal strings. Rounds redact seeds
+        until settlement and crash points until crash. Returns snapshot-consistent
+        total and page, newest first.
+      parameters:
+      - default: 1
+        description: Page starts at 1
+        in: query
+        name: page
+        type: integer
+      - default: 25
+        description: Page size, maximum 100
+        in: query
+        name: page_size
+        type: integer
+      - description: Status except wallet transactions
+        in: query
+        name: status
+        type: string
+      - description: User ID for bets, payments, wallet
+        in: query
+        name: user_id
+        type: integer
+      - description: Round ID for bets
+        in: query
+        name: round_id
+        type: integer
+      - description: Username/email search for users
+        in: query
+        name: search
+        type: string
+      - description: Wallet transaction type
+        in: query
+        name: type
+        type: string
+      - description: Exact wallet reference
+        in: query
+        name: reference
+        type: string
+      - description: Inclusive RFC3339 timestamp
+        in: query
+        name: from
+        type: string
+      - description: Exclusive RFC3339 timestamp
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/admin.Page'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List administrative records
+      tags:
+      - admin
+  /api/admin/config:
+    get:
+      description: Requires an active ADMIN role. Analytics use settled rounds, exclude
+        cancelled bets, and bucket days in UTC.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Admin Config
+      tags:
+      - admin
+  /api/admin/deposits:
+    get:
+      description: Requires ADMIN. Amounts are decimal strings. Rounds redact seeds
+        until settlement and crash points until crash. Returns snapshot-consistent
+        total and page, newest first.
+      parameters:
+      - default: 1
+        description: Page starts at 1
+        in: query
+        name: page
+        type: integer
+      - default: 25
+        description: Page size, maximum 100
+        in: query
+        name: page_size
+        type: integer
+      - description: Status except wallet transactions
+        in: query
+        name: status
+        type: string
+      - description: User ID for bets, payments, wallet
+        in: query
+        name: user_id
+        type: integer
+      - description: Round ID for bets
+        in: query
+        name: round_id
+        type: integer
+      - description: Username/email search for users
+        in: query
+        name: search
+        type: string
+      - description: Wallet transaction type
+        in: query
+        name: type
+        type: string
+      - description: Exact wallet reference
+        in: query
+        name: reference
+        type: string
+      - description: Inclusive RFC3339 timestamp
+        in: query
+        name: from
+        type: string
+      - description: Exclusive RFC3339 timestamp
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/admin.Page'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List administrative records
+      tags:
+      - admin
+  /api/admin/game/current:
+    get:
+      description: Requires ADMIN; uses the public redaction rules for fairness data.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/game.Snapshot'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get running and upcoming rounds for admin monitoring
+      tags:
+      - admin
+  /api/admin/game/status:
+    get:
+      description: Requires an active ADMIN role. Analytics use settled rounds, exclude
+        cancelled bets, and bucket days in UTC.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Admin System
+      tags:
+      - admin
+  /api/admin/overview:
+    get:
+      description: Requires an active ADMIN role. Analytics use settled rounds, exclude
+        cancelled bets, and bucket days in UTC.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/admin.OverviewResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Admin Overview
+      tags:
+      - admin
+  /api/admin/rounds:
+    get:
+      description: Requires ADMIN. Amounts are decimal strings. Rounds redact seeds
+        until settlement and crash points until crash. Returns snapshot-consistent
+        total and page, newest first.
+      parameters:
+      - default: 1
+        description: Page starts at 1
+        in: query
+        name: page
+        type: integer
+      - default: 25
+        description: Page size, maximum 100
+        in: query
+        name: page_size
+        type: integer
+      - description: Status except wallet transactions
+        in: query
+        name: status
+        type: string
+      - description: User ID for bets, payments, wallet
+        in: query
+        name: user_id
+        type: integer
+      - description: Round ID for bets
+        in: query
+        name: round_id
+        type: integer
+      - description: Username/email search for users
+        in: query
+        name: search
+        type: string
+      - description: Wallet transaction type
+        in: query
+        name: type
+        type: string
+      - description: Exact wallet reference
+        in: query
+        name: reference
+        type: string
+      - description: Inclusive RFC3339 timestamp
+        in: query
+        name: from
+        type: string
+      - description: Exclusive RFC3339 timestamp
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/admin.Page'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List administrative records
+      tags:
+      - admin
+  /api/admin/rounds/{id}:
+    get:
+      description: Requires an active ADMIN role. Analytics use settled rounds, exclude
+        cancelled bets, and bucket days in UTC.
+      parameters:
+      - description: Resource ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Admin Round
+      tags:
+      - admin
+  /api/admin/session:
+    get:
+      description: Requires an active ADMIN role. Analytics use settled rounds, exclude
+        cancelled bets, and bucket days in UTC.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Admin Session
+      tags:
+      - admin
+  /api/admin/users:
+    get:
+      description: Requires ADMIN. Amounts are decimal strings. Rounds redact seeds
+        until settlement and crash points until crash. Returns snapshot-consistent
+        total and page, newest first.
+      parameters:
+      - default: 1
+        description: Page starts at 1
+        in: query
+        name: page
+        type: integer
+      - default: 25
+        description: Page size, maximum 100
+        in: query
+        name: page_size
+        type: integer
+      - description: Status except wallet transactions
+        in: query
+        name: status
+        type: string
+      - description: User ID for bets, payments, wallet
+        in: query
+        name: user_id
+        type: integer
+      - description: Round ID for bets
+        in: query
+        name: round_id
+        type: integer
+      - description: Username/email search for users
+        in: query
+        name: search
+        type: string
+      - description: Wallet transaction type
+        in: query
+        name: type
+        type: string
+      - description: Exact wallet reference
+        in: query
+        name: reference
+        type: string
+      - description: Inclusive RFC3339 timestamp
+        in: query
+        name: from
+        type: string
+      - description: Exclusive RFC3339 timestamp
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/admin.Page'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List administrative records
+      tags:
+      - admin
+  /api/admin/users/{id}:
+    get:
+      description: Requires an active ADMIN role. Analytics use settled rounds, exclude
+        cancelled bets, and bucket days in UTC.
+      parameters:
+      - description: Resource ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Admin User
+      tags:
+      - admin
+  /api/admin/users/{id}/status:
+    patch:
+      consumes:
+      - application/json
+      description: Requires an active ADMIN role. Analytics use settled rounds, exclude
+        cancelled bets, and bucket days in UTC.
+      parameters:
+      - description: Resource ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Action details. Reuse the wallet reference on retries.
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/admin.StatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Admin Status
+      tags:
+      - admin
+  /api/admin/users/{id}/wallet-adjustments:
+    post:
+      consumes:
+      - application/json
+      description: Requires an active ADMIN role. Analytics use settled rounds, exclude
+        cancelled bets, and bucket days in UTC.
+      parameters:
+      - description: Resource ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Action details. Reuse the wallet reference on retries.
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/admin.AdjustmentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Admin Adjust
+      tags:
+      - admin
+  /api/admin/wallet-transactions:
+    get:
+      description: Requires ADMIN. Amounts are decimal strings. Rounds redact seeds
+        until settlement and crash points until crash. Returns snapshot-consistent
+        total and page, newest first.
+      parameters:
+      - default: 1
+        description: Page starts at 1
+        in: query
+        name: page
+        type: integer
+      - default: 25
+        description: Page size, maximum 100
+        in: query
+        name: page_size
+        type: integer
+      - description: Status except wallet transactions
+        in: query
+        name: status
+        type: string
+      - description: User ID for bets, payments, wallet
+        in: query
+        name: user_id
+        type: integer
+      - description: Round ID for bets
+        in: query
+        name: round_id
+        type: integer
+      - description: Username/email search for users
+        in: query
+        name: search
+        type: string
+      - description: Wallet transaction type
+        in: query
+        name: type
+        type: string
+      - description: Exact wallet reference
+        in: query
+        name: reference
+        type: string
+      - description: Inclusive RFC3339 timestamp
+        in: query
+        name: from
+        type: string
+      - description: Exclusive RFC3339 timestamp
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/admin.Page'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List administrative records
+      tags:
+      - admin
+  /api/admin/withdrawals:
+    get:
+      description: Requires ADMIN. Amounts are decimal strings. Rounds redact seeds
+        until settlement and crash points until crash. Returns snapshot-consistent
+        total and page, newest first.
+      parameters:
+      - default: 1
+        description: Page starts at 1
+        in: query
+        name: page
+        type: integer
+      - default: 25
+        description: Page size, maximum 100
+        in: query
+        name: page_size
+        type: integer
+      - description: Status except wallet transactions
+        in: query
+        name: status
+        type: string
+      - description: User ID for bets, payments, wallet
+        in: query
+        name: user_id
+        type: integer
+      - description: Round ID for bets
+        in: query
+        name: round_id
+        type: integer
+      - description: Username/email search for users
+        in: query
+        name: search
+        type: string
+      - description: Wallet transaction type
+        in: query
+        name: type
+        type: string
+      - description: Exact wallet reference
+        in: query
+        name: reference
+        type: string
+      - description: Inclusive RFC3339 timestamp
+        in: query
+        name: from
+        type: string
+      - description: Exclusive RFC3339 timestamp
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/admin.Page'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/admin.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List administrative records
+      tags:
+      - admin
   /api/auth/login:
     post:
       consumes:

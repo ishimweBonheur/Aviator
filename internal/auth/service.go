@@ -20,6 +20,7 @@ type User struct {
 	ID       int64
 	Username string
 	Email    string
+	Role     string
 }
 
 func NewService(db *pgxpool.Pool, jwtSecret string) *Service {
@@ -67,7 +68,7 @@ func (s *Service) Register(
 			password_hash
 		)
 		VALUES ($1, $2, $3)
-		RETURNING id, username, email
+		RETURNING id, username, email, role
 		`,
 		username,
 		email,
@@ -76,6 +77,7 @@ func (s *Service) Register(
 		&user.ID,
 		&user.Username,
 		&user.Email,
+		&user.Role,
 	)
 
 	if err != nil {
@@ -105,7 +107,7 @@ func (s *Service) Login(
 			username,
 			email,
 			password_hash,
-			status
+			status, role
 		FROM users
 		WHERE email = $1
 		`,
@@ -116,6 +118,7 @@ func (s *Service) Login(
 		&user.Email,
 		&passwordHash,
 		&status,
+		&user.Role,
 	)
 
 	if err != nil {

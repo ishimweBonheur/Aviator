@@ -43,7 +43,7 @@ Every engine pass resumes from PostgreSQL: CREATED opens; BETTING_OPEN resumes i
 
 The crash boundary is `started_at + ln(crash_point)/growth_rate`. Cashout uses the shared multiplier Clock after obtaining round, bet and wallet locks. Equality or later fails even if PostgreSQL still says RUNNING because the display ticker has not observed the crash. The ticker controls display updates only. User-visible multipliers use exactly two decimal places; stored crash points retain four.
 
-Migration `000002_round_timing` adds betting timestamps, per-round growth rate and house edge, and unique partial indexes for one RUNNING and one upcoming CREATED/BETTING_OPEN/BETTING_CLOSED round. It backfills legacy deadlines from original creation times without resetting them. Existing duplicate active rounds cause index creation to fail rather than silently deleting data.
+The initial schema includes betting timestamps, per-round growth rate and house edge, and unique partial indexes for one RUNNING and one upcoming CREATED/BETTING_OPEN/BETTING_CLOSED round. Timing and admin migrations have been consolidated into the initial up/down pair. See `ADMIN.md` for existing-database migration metadata guidance.
 
 ## Redis and leadership
 

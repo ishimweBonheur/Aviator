@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "aviator/backend/docs"
+	"aviator/backend/internal/admin"
 	"aviator/backend/internal/auth"
 	"aviator/backend/internal/betting"
 	"aviator/backend/internal/cache"
@@ -302,6 +303,11 @@ func main() {
 	// ============================================================
 
 	mux := http.NewServeMux()
+	admin.Register(mux, db, authService, cfg, func(ctx context.Context) map[string]any {
+		result := store.AdminStatus(ctx)
+		result["websocket_clients_this_instance"] = realtimeHub.ClientCount()
+		return result
+	}, gameHandler.GetCurrentRound)
 
 	// ============================================================
 	// WebSocket
