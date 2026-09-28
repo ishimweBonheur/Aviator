@@ -4,11 +4,14 @@ import (
 	"aviator/backend/internal/database"
 	"aviator/backend/internal/multiplier"
 	"github.com/jackc/pgx/v5"
+	"math"
 	"net/http"
 	"time"
 )
 
 type Snapshot struct {
+	SecondsRemaining  int        `json:"seconds_remaining"`
+	Phase             string     `json:"phase"`
 	Running           *GameRound `json:"running"`
 	Upcoming          *GameRound `json:"upcoming"`
 	CurrentMultiplier string     `json:"current_multiplier,omitempty"`
@@ -88,11 +91,31 @@ func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
 	result := Snapshot{Running: running, Upcoming: upcoming, ServerTime: time.Now().UTC()}
 	if running != nil && running.StartedAt != nil && running.CrashPoint != nil {
 		clock := multiplier.Clock{Rate: running.GrowthRate}
-		m := clock.Calculate(*running.StartedAt, result.ServerTime)
-		if m.GreaterThan(*running.CrashPoint) {
-			m = *running.CrashPoint
+		crashAt, timingErr := clock.CrashAt(*running.StartedAt, *running.CrashPoint)
+		if timingErr != nil || !result.ServerTime.Before(crashAt) {
+			// The engine may be waiting on settlement/locks. Do not expose an
+			// expired flight as live while it catches up.
+			result.Running = nil
+		} else {
+			m := clock.Calculate(*running.StartedAt, result.ServerTime)
+			if m.GreaterThan(*running.CrashPoint) {
+				m = *running.CrashPoint
+			}
+			result.CurrentMultiplier = m.StringFixed(2)
 		}
-		result.CurrentMultiplier = m.StringFixed(2)
+	}
+	result.Phase = "WAITING"
+	if result.Running != nil {
+		result.Phase = "RUNNING"
+	}
+	if result.Upcoming != nil && result.Running == nil {
+		result.Phase = string(result.Upcoming.Status)
+		if result.Upcoming.Status == RoundBettingOpen && result.Upcoming.BettingClosesAt != nil {
+			result.SecondsRemaining = int(math.Max(0, math.Ceil(result.Upcoming.BettingClosesAt.Sub(result.ServerTime).Seconds())))
+			if result.SecondsRemaining == 0 {
+				result.Phase = "BETTING_CLOSED"
+			}
+		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "failed to load snapshot")

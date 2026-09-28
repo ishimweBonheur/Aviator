@@ -45,7 +45,7 @@ func (repo *Repository) overview(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	delete(result, "daily")
-	rows, err := repo.objects(ctx, `SELECT json_build_object('total_users',(SELECT count(*) FROM users),'active_users',(SELECT count(*) FROM users WHERE status='ACTIVE'),'total_player_balances',(SELECT COALESCE(sum(balance),0)::text FROM users),'active_bets',(SELECT count(*) FROM bets WHERE status='ACTIVE'),'pending_deposits',(SELECT count(*) FROM deposits WHERE status IN ('PENDING','PROCESSING')),'pending_withdrawals',(SELECT count(*) FROM withdrawals WHERE status IN ('PENDING','PROCESSING')))`)
+	rows, err := repo.objects(ctx, `SELECT json_build_object('total_bets',(SELECT count(*) FROM bets WHERE status<>'CANCELLED'),'total_users',(SELECT count(*) FROM users),'active_users',(SELECT count(*) FROM users WHERE status='ACTIVE'),'total_player_balances',(SELECT COALESCE(sum(balance),0)::text FROM users WHERE role='PLAYER'),'active_bets',(SELECT count(*) FROM bets WHERE status='ACTIVE'),'pending_deposits',(SELECT count(*) FROM deposits WHERE status IN ('PENDING','PROCESSING')),'pending_withdrawals',(SELECT count(*) FROM withdrawals WHERE status IN ('PENDING','PROCESSING')))`)
 	if err != nil {
 		return nil, err
 	}

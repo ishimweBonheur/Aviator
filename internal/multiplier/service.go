@@ -40,6 +40,9 @@ func (s *Service) Start(roundID int64, startedAt time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if state, ok := s.states[roundID]; ok && state.Running && state.StartedAt.Equal(startedAt) {
+		return
+	}
 	s.states[roundID] = State{
 		RoundID:    roundID,
 		Multiplier: oneMultiplier,
@@ -67,7 +70,9 @@ func (s *Service) Current(roundID int64) (decimal.Decimal, error) {
 		)
 	}
 
-	return Calculate(state.StartedAt, time.Now()), nil
+	// Only the engine advances this value after checking durable RUNNING state
+	// and the authoritative crash boundary. Reads never advance the clock.
+	return state.Multiplier, nil
 }
 
 func (s *Service) Set(
@@ -91,6 +96,9 @@ func (s *Service) Set(
 		)
 	}
 
+	if !state.Running {
+		return fmt.Errorf("round %d is not running", roundID)
+	}
 	state.Multiplier = value
 	s.states[roundID] = state
 
@@ -129,4 +137,11 @@ func (s *Service) Remove(roundID int64) {
 // overflow so a stale RUNNING round cannot crash the entire application.
 func Calculate(startedAt, now time.Time) decimal.Decimal {
 	return (Clock{Rate: growthRate}).Calculate(startedAt, now)
+}
+
+// StopAll clears process-local flight state when engine leadership ends.
+func (s *Service) StopAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clear(s.states)
 }

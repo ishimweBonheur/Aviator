@@ -8,6 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 type CancelResult struct {
@@ -35,13 +36,14 @@ func (s *Service) Cancel(ctx context.Context, userID, betID int64) (*CancelResul
 		return nil, fmt.Errorf("betting is closed")
 	}
 	var amount decimal.Decimal
-	if err := tx.QueryRow(ctx, "SELECT status,amount FROM bets WHERE id=$1 AND user_id=$2 FOR UPDATE", betID, userID).Scan(&status, &amount); err != nil {
+	var placedAt time.Time
+	if err := tx.QueryRow(ctx, "SELECT status,amount,placed_at FROM bets WHERE id=$1 AND user_id=$2 FOR UPDATE", betID, userID).Scan(&status, &amount, &placedAt); err != nil {
 		return nil, fmt.Errorf("bet not found")
 	}
 	if status != "ACTIVE" {
 		return nil, fmt.Errorf("bet is no longer active")
 	}
-	if err := s.walletService.CreditTx(ctx, tx, userID, amount, "REFUND", fmt.Sprintf("CANCEL-BET-%d", betID)); err != nil {
+	if err := s.walletService.CreditTx(ctx, tx, userID, amount, "REFUND", fmt.Sprintf("CANCEL-BET-%d-%d", betID, placedAt.UnixNano())); err != nil {
 		return nil, err
 	}
 	// Recheck after waiting for the wallet lock. Roll back the refund if the

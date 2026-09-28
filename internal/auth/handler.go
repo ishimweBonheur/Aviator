@@ -42,7 +42,7 @@ type ErrorResponse struct {
 
 // Register creates a new user account.
 // @Summary Register a user
-// @Description Creates a user account. Username and email are required, and the password must be at least 8 characters.
+// @Description Creates a PLAYER account. The submitted role is never accepted; username and email are required, and the password must be at least 8 characters.
 // @Tags auth
 // @Accept json
 // @Produce json

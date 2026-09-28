@@ -26,7 +26,7 @@ type Handler struct {
 
 func Register(mux *http.ServeMux, db *pgxpool.Pool, a *auth.Service, cfg config.Config, monitor func(context.Context) map[string]any, current http.HandlerFunc) {
 	h := &Handler{&Repository{db}, cfg, monitor, current}
-	routes := map[string]http.HandlerFunc{"GET /api/admin/session": h.Session, "GET /api/admin/overview": h.Overview, "GET /api/admin/analytics": h.Analytics, "GET /api/admin/users/{id}": h.User, "PATCH /api/admin/users/{id}/status": h.Status, "POST /api/admin/users/{id}/wallet-adjustments": h.Adjust, "GET /api/admin/rounds/{id}": h.Round, "GET /api/admin/game/status": h.System, "GET /api/admin/game/current": h.Current, "GET /api/admin/config": h.Config}
+	routes := map[string]http.HandlerFunc{"GET /api/admin/session": h.Session, "GET /api/admin/overview": h.Overview, "GET /api/admin/analytics": h.Analytics, "GET /api/admin/users/{id}": h.User, "POST /api/admin/users/admins": h.CreateAdmin, "PATCH /api/admin/users/{id}/role": h.Role, "PATCH /api/admin/users/{id}/status": h.Status, "POST /api/admin/users/{id}/wallet-adjustments": h.Adjust, "GET /api/admin/rounds/{id}": h.Round, "GET /api/admin/game/status": h.System, "GET /api/admin/game/current": h.Current, "GET /api/admin/config": h.Config}
 	for name := range projections {
 		resource := name
 		routes["GET /api/admin/"+name] = func(w http.ResponseWriter, r *http.Request) {
@@ -220,6 +220,55 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 		err = h.repo.status(r.Context(), actor, id, input)
 	}
 	respond(w, map[string]string{"status": "updated"}, err)
+}
+
+// @Summary Change a user's role
+// @Description Requires ADMIN. Administrators can change another user's role but cannot change their own role or demote the last active administrator.
+// @Tags admin
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path int true "User ID"
+// @Param request body RoleRequest true "New role"
+// @Success 200 {object} map[string]string
+// @Failure 400,401,403,404,409,500 {object} ErrorResponse
+// @Router /api/admin/users/{id}/role [patch]
+func (h *Handler) Role(w http.ResponseWriter, r *http.Request) {
+	id, err := identifier(r)
+	var input RoleRequest
+	if err == nil {
+		err = decode(w, r, &input)
+	}
+	if err == nil {
+		actor, _ := auth.UserIDFromContext(r.Context())
+		err = h.repo.role(r.Context(), actor, id, input)
+	}
+	respond(w, map[string]string{"status": "updated"}, err)
+}
+
+// @Summary Create an administrator account
+// @Description Requires ADMIN. Creates a new active ADMIN account and records the action in the audit log.
+// @Tags admin
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param request body AdminUserRequest true "Administrator account details"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400,401,403,409,500 {object} ErrorResponse
+// @Router /api/admin/users/admins [post]
+func (h *Handler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
+	var input AdminUserRequest
+	err := decode(w, r, &input)
+	var user map[string]any
+	if err == nil {
+		actor, _ := auth.UserIDFromContext(r.Context())
+		user, err = h.repo.createAdmin(r.Context(), actor, input)
+	}
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	httpapi.JSON(w, http.StatusCreated, map[string]any{"user": user})
 }
 
 // @Summary Admin Adjust

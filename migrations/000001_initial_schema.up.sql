@@ -195,3 +195,19 @@ CREATE INDEX idx_game_rounds_created_at ON game_rounds(created_at);
 CREATE UNIQUE INDEX one_running_round ON game_rounds ((1)) WHERE status = 'RUNNING';
 
 CREATE UNIQUE INDEX one_upcoming_round ON game_rounds ((1)) WHERE status IN ('CREATED', 'BETTING_OPEN', 'BETTING_CLOSED');
+
+CREATE TABLE auto_bet_settings (
+ user_id BIGINT NOT NULL REFERENCES users(id),
+ bet_number SMALLINT NOT NULL CHECK (bet_number IN (1,2)),
+ enabled BOOLEAN NOT NULL DEFAULT false,
+ amount NUMERIC(18,2) NOT NULL CHECK (amount >= 50),
+ auto_cashout_multiplier NUMERIC(12,2) CHECK (auto_cashout_multiplier >= 1.01 AND auto_cashout_multiplier <= 1000000),
+ last_round_id BIGINT NOT NULL DEFAULT 0,
+ last_error TEXT NOT NULL DEFAULT '',
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(user_id,bet_number)
+);
+CREATE INDEX auto_bet_enabled ON auto_bet_settings(last_round_id) WHERE enabled;
+ALTER TABLE bets ADD COLUMN auto_cashout_multiplier NUMERIC(12,2) CHECK (auto_cashout_multiplier >= 1.01 AND auto_cashout_multiplier <= 1000000);
+ALTER TABLE bets ADD COLUMN is_auto BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE bets ADD COLUMN cashout_source TEXT CHECK (cashout_source IN ('MANUAL','AUTO'));

@@ -64,7 +64,7 @@ func (r *Repository) GetRoundStatus(
 		return "", fmt.Errorf("failed to get round status: %w", err)
 	}
 
-	if closes == nil || !time.Now().Before(*closes) {
+	if closes != nil && !time.Now().Before(*closes) {
 		return "BETTING_CLOSED", nil
 	}
 	return status, nil
@@ -96,6 +96,10 @@ func (r *Repository) CreateBet(
 			payout
 		)
 		VALUES ($1, $2, $3, $4, 'ACTIVE', 0.00)
+ ON CONFLICT (round_id, user_id, bet_number) DO UPDATE
+ SET amount=EXCLUDED.amount, status='ACTIVE', payout=0.00,
+ auto_cashout_multiplier=NULL, placed_at=clock_timestamp()
+ WHERE bets.status='CANCELLED'
 		RETURNING
 			id,
 			round_id,

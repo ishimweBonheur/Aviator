@@ -65,9 +65,10 @@ func (s *Service) Register(
 		INSERT INTO users (
 			username,
 			email,
-			password_hash
+			password_hash,
+			role
 		)
-		VALUES ($1, $2, $3)
+		VALUES ($1, $2, $3, 'PLAYER')
 		RETURNING id, username, email, role
 		`,
 		username,

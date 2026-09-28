@@ -320,8 +320,9 @@ func (r *Repository) StartRound(
 		UPDATE game_rounds
 		SET
 			status = $1,
-			started_at = NOW()
-		WHERE id = $2 AND status='BETTING_CLOSED'
+			started_at = clock_timestamp()
+		WHERE id = $2 AND status='BETTING_CLOSED' AND crash_point IS NOT NULL
+		AND NOT EXISTS (SELECT 1 FROM game_rounds WHERE status IN ('RUNNING','CRASHED'))
 	`,
 		RoundRunning,
 		id,

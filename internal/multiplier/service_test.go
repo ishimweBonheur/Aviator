@@ -108,3 +108,25 @@ func decimalFromString(value string) decimal.Decimal {
 
 	return d
 }
+
+func TestServiceOnlyAdvancesFromEngineAndStops(t *testing.T) {
+	s := NewService()
+	s.Start(1, time.Now().Add(-time.Hour))
+	if got, err := s.Current(1); err != nil || !got.Equal(decimal.NewFromInt(1)) {
+		t.Fatalf("read advanced clock: %s %v", got, err)
+	}
+	if err := s.Set(1, decimal.RequireFromString("2.47")); err != nil {
+		t.Fatal(err)
+	}
+	s.Stop(1)
+	if _, err := s.Current(1); err == nil {
+		t.Fatal("stopped round returned live multiplier")
+	}
+	if err := s.Set(1, decimal.NewFromInt(3)); err == nil {
+		t.Fatal("stopped round accepted tick")
+	}
+	s.StopAll()
+	if _, err := s.Current(1); err == nil {
+		t.Fatal("leadership shutdown retained state")
+	}
+}

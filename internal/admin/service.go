@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/mail"
 	"regexp"
 
 	"strings"
 
 	"aviator/backend/internal/wallet"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type StatusRequest struct {
@@ -23,8 +26,111 @@ type AdjustmentRequest struct {
 	Reason    string `json:"reason"`
 	Reference string `json:"reference"`
 }
+type RoleRequest struct {
+	Role string `json:"role"`
+}
+type AdminUserRequest struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
 
 var moneyPattern = regexp.MustCompile(`^[0-9]{1,16}(\.[0-9]{1,2})?$`)
+
+func (repo *Repository) role(ctx context.Context, actor, id int64, input RoleRequest) error {
+	if input.Role != "PLAYER" && input.Role != "ADMIN" {
+		return invalid("invalid role")
+	}
+	if actor == id {
+		return invalid("administrators cannot change their own role")
+	}
+	tx, err := repo.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('admin-role-management',0))"); err != nil {
+		return err
+	}
+	var before, status string
+	if err = tx.QueryRow(ctx, "SELECT role,status FROM users WHERE id=$1 FOR UPDATE", id).Scan(&before, &status); errors.Is(err, pgx.ErrNoRows) {
+		return invalid("user not found")
+	} else if err != nil {
+		return err
+	}
+	if before == input.Role {
+		return tx.Commit(ctx)
+	}
+	if before == "ADMIN" && input.Role == "PLAYER" && status == "ACTIVE" {
+		var activeAdmins int
+		if err = tx.QueryRow(ctx, "SELECT count(*) FROM users WHERE role='ADMIN' AND status='ACTIVE'").Scan(&activeAdmins); err != nil {
+			return err
+		}
+		if activeAdmins <= 1 {
+			return invalid("cannot demote the last active administrator")
+		}
+	}
+	if _, err = tx.Exec(ctx, "UPDATE users SET role=$1,updated_at=now() WHERE id=$2", input.Role, id); err != nil {
+		return err
+	}
+	detail, _ := json.Marshal(map[string]string{"before": before, "after": input.Role})
+	if _, err = tx.Exec(ctx, "INSERT INTO admin_audit_logs(admin_id,user_id,action,details) VALUES($1,$2,'ROLE_CHANGE',$3)", actor, id, detail); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (repo *Repository) createAdmin(ctx context.Context, actor int64, input AdminUserRequest) (map[string]any, error) {
+	input.Username = strings.TrimSpace(input.Username)
+	input.Email = strings.TrimSpace(input.Email)
+	if input.Username == "" || len(input.Username) > 50 {
+		return nil, invalid("username must contain 1 to 50 characters")
+	}
+	address, err := mail.ParseAddress(input.Email)
+	if err != nil || address.Address != input.Email || len(input.Email) > 255 {
+		return nil, invalid("invalid email")
+	}
+	if len(input.Password) < 8 {
+		return nil, invalid("password must be at least 8 characters")
+	}
+	if len(input.Password) > 72 {
+		return nil, invalid("password must be at most 72 bytes")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := repo.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('admin-role-management',0))"); err != nil {
+		return nil, err
+	}
+	var id int64
+	var raw []byte
+	err = tx.QueryRow(ctx, `INSERT INTO users(username,email,password_hash,role) VALUES($1,$2,$3,'ADMIN') RETURNING id,json_build_object('id',id,'username',username,'email',email,'role',role,'status',status)`, input.Username, input.Email, string(hash)).Scan(&id, &raw)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, invalid("username or email already exists")
+		}
+		return nil, err
+	}
+	var user map[string]any
+	if err = json.Unmarshal(raw, &user); err != nil {
+		return nil, err
+	}
+	detail, _ := json.Marshal(map[string]string{"username": input.Username, "email": input.Email, "role": "ADMIN"})
+	if _, err = tx.Exec(ctx, "INSERT INTO admin_audit_logs(admin_id,user_id,action,details) VALUES($1,$2,'ADMIN_CREATED',$3)", actor, id, detail); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
 
 func (repo *Repository) status(ctx context.Context, actor, id int64, input StatusRequest) error {
 	if input.Status != "ACTIVE" && input.Status != "SUSPENDED" && input.Status != "BLOCKED" {

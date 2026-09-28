@@ -59,12 +59,22 @@ func (h *Handler) PlaceBet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	targets := []decimal.Decimal{}
+	if request.AutoCashout != nil {
+		target, err := decimal.NewFromString(*request.AutoCashout)
+		if err != nil {
+			httpapi.Error(w, "invalid auto cashout", 400)
+			return
+		}
+		targets = append(targets, target)
+	}
 	bet, err := h.service.PlaceBet(
 		r.Context(),
 		userID,
 		request.RoundID,
 		request.BetNumber,
 		amount,
+		targets...,
 	)
 	if err != nil {
 		httpapi.ServiceError(w, err)

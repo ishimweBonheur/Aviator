@@ -37,7 +37,7 @@ Limits require positive amounts with at most two decimals and consistent ranges.
 
 ## Game lifecycle and recovery
 
-One running round and one upcoming round are maintained. The upcoming round opens immediately while the running round flies. Its betting deadline is durable; after five seconds it closes and may wait for the current flight to settle before promotion. The UI displays both the flying round and the upcoming countdown. A closed upcoming round cannot accept bets or cancellations even if the engine is temporarily offline.
+Rounds are sequential: RUNNING → CRASHED → SETTLED → BETTING_OPEN → BETTING_CLOSED → RUNNING. The engine stops the crashed multiplier before settlement and opens the next five-second betting countdown only after settlement succeeds. No multiplier updates occur between ROUND_CRASHED and the next ROUND_STARTED. The UI displays the countdown instead of the live multiplier during betting. Betting and cancellation stop at the durable deadline even if the engine is temporarily offline. Existing overlapping rounds from the older engine receive a fresh full betting window after the previous flight settles, preserving their bets.
 
 Every engine pass resumes from PostgreSQL: CREATED opens; BETTING_OPEN resumes its remaining deadline; BETTING_CLOSED generates a missing crash point and starts when no flight is running; RUNNING continues from its original timestamp or crashes immediately if expired; CRASHED settles remaining ACTIVE bets; SETTLED is complete. Settlement does not overwrite CASHED_OUT or CANCELLED bets.
 
@@ -95,7 +95,7 @@ SANDBOX deposit creation, completion, wallet credit and DEPOSIT audit entry comm
 
 The existing centralized API client now connects cancellation, explicit cashout, snapshot, history, limits and fairness. Auth uses the existing session-storage convention and handles expiry/logout. Betting panels distinguish upcoming bets from flying bets, display deadlines and configured payout caps, reconcile persisted state, and refresh balances after mutations. Wallet view offers SANDBOX/MTN_MOMO, pending withdrawals, deposit history and ledger. Round history opens a fairness view that hashes the revealed seed and reproduces the existing HMAC extraction/formula.
 
-The explicit standalone demo remains a separate development mode; backend mode does not use its funds, players or results. Public leaderboard/player aggregates and server auto cashout are not invented; their UI remains unavailable. Requests that mutate funds are never automatically retried. A cancelled slot remains used for that round, matching the existing unique `(round_id,user_id,bet_number)` constraint.
+The frontend has no standalone simulation. Automatic bets and cashouts execute on the server using persisted settings and targets. Public leaderboard/player aggregates remain unavailable. A cancelled slot remains used for that round, matching the existing unique `(round_id,user_id,bet_number)` constraint.
 
 ## Validation
 
@@ -115,4 +115,6 @@ Frontend: `npm run build`, `npm run lint`, `npm test`, `node live-smoke.mjs`. Li
 
 ## Intentional limits
 
-Real MTN MoMo integration, real external withdrawal-provider integration, a comprehensive new automated test suite, and full production deployment/security hardening are intentionally not implemented. SANDBOX funding is for local development. Redis Pub/Sub has no durable event replay. List endpoints are bounded recent history rather than a full pagination system. Browser fairness arithmetic is for inspection; the existing Go decimal algorithm remains authoritative.
+Real MTN MoMo integration, real external withdrawal-provider integration, a comprehensive new automated test suite, and full production deployment/security hardening are intentionally not implemented. SANDBOX funding is for local development. Redis Pub/Sub has no durable event replay. Player history is bounded recent history; admin lists support filters and pagination. Fairness verification uses the backend Go decimal algorithm through the verification API.
+
+Automatic execution and administration schema are part of the sole initial migration pair. Read `ADMIN.md` for existing-database metadata rebaseline guidance, role-management APIs, and execution semantics.

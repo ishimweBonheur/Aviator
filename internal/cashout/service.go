@@ -43,6 +43,10 @@ func (s *Service) CashOut(
 	betID int64,
 ) (*CashoutResponse, error) {
 
+	return s.cashOut(ctx, userID, betID, false)
+}
+func (s *Service) cashOut(ctx context.Context, userID, betID int64, automatic bool) (*CashoutResponse, error) {
+
 	if userID <= 0 {
 		return nil, fmt.Errorf("invalid user ID")
 	}
@@ -108,6 +112,22 @@ func (s *Service) CashOut(
 	if err != nil {
 		return nil, err
 	}
+	source := "MANUAL"
+	if automatic {
+		var target *decimal.Decimal
+		if err := tx.QueryRow(ctx, "SELECT auto_cashout_multiplier FROM bets WHERE id=$1", betID).Scan(&target); err != nil {
+			return nil, err
+		}
+		if target == nil || currentMultiplier.LessThan(*target) {
+			return nil, fmt.Errorf("automatic cashout target not reached")
+		}
+		targetAt, err := clock.CrashAt(*started, *target)
+		if err != nil || now.Before(targetAt) {
+			return nil, fmt.Errorf("automatic cashout target not reached")
+		}
+		currentMultiplier = *target
+		source = "AUTO"
+	}
 	payout := bet.Amount.Mul(currentMultiplier).Round(2)
 
 	if payout.GreaterThan(s.limits.MaxPayout) {
@@ -141,6 +161,9 @@ func (s *Service) CashOut(
 		return nil, err
 	}
 
+	if _, err := tx.Exec(ctx, "UPDATE bets SET cashout_source=$2 WHERE id=$1", bet.ID, source); err != nil {
+		return nil, err
+	}
 	var balance decimal.Decimal
 	if err := tx.QueryRow(ctx, "SELECT balance FROM users WHERE id=$1", userID).Scan(&balance); err != nil {
 		return nil, fmt.Errorf("failed to read balance: %w", err)

@@ -79,13 +79,5 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  frontend:
-    build:
-      context: ../Aviator-frontend
-    ports:
-      - "${FRONTEND_PORT:-5173}:80"
-    depends_on:
-      - backend
-
 volumes:
   aviator_postgres_data:

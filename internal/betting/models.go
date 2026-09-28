@@ -26,7 +26,8 @@ type Bet struct {
 }
 
 type PlaceBetRequest struct {
-	RoundID   int64  `json:"round_id"`
-	BetNumber int16  `json:"bet_number"`
-	Amount    string `json:"amount"`
+	AutoCashout *string `json:"auto_cashout_multiplier,omitempty"`
+	RoundID     int64   `json:"round_id"`
+	BetNumber   int16   `json:"bet_number"`
+	Amount      string  `json:"amount"`
 }

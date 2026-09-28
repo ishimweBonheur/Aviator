@@ -21,6 +21,7 @@ func (e *Engine) RunLeader(ctx context.Context) {
 		return
 	}
 	defer conn.Release()
+	defer e.multiplierService.StopAll()
 	var locked bool
 	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock(728194620)").Scan(&locked); err != nil || !locked {
 		return
@@ -50,14 +51,21 @@ func (e *Engine) RunLeader(ctx context.Context) {
 
 func (e *Engine) emit(ctx context.Context, kind string, r *GameRound) {
 	event := realtime.Event{Type: kind, RoundID: r.ID, RoundNumber: r.RoundNumber, BettingClosesAt: r.BettingClosesAt}
+	if kind == realtime.EventRoundOpened && r.BettingClosesAt != nil {
+		seconds := int(math.Max(0, math.Ceil(time.Until(*r.BettingClosesAt).Seconds())))
+		event.SecondsRemaining = &seconds
+	}
+	if kind == realtime.EventRoundStarted {
+		event.Multiplier = "1.00"
+	}
 	if kind == realtime.EventRoundCrashed && r.CrashPoint != nil {
 		event.CrashPoint = r.CrashPoint.StringFixed(2)
 	}
 	e.publisher.Publish(ctx, event)
 }
 
-// Each pass resumes from durable state. The next round opens immediately while
-// the current round runs; it can close on its deadline and wait for promotion.
+// Each pass resumes from durable state. Upcoming bets stay open during flight;
+// settlement completes before the upcoming countdown starts.
 func (e *Engine) recoverStep(ctx context.Context) error {
 	repo := e.service.repository
 	// Complete interrupted settlements first.
@@ -69,10 +77,11 @@ func (e *Engine) recoverStep(ctx context.Context) error {
 		if crashed == nil {
 			break
 		}
+		e.multiplierService.Remove(crashed.ID)
+		e.emit(ctx, realtime.EventRoundCrashed, crashed)
 		if _, err := e.settlementService.SettleRound(ctx, crashed.ID); err != nil {
 			return err
 		}
-		e.multiplierService.Remove(crashed.ID)
 		e.emit(ctx, realtime.EventRoundSettled, crashed)
 	}
 	running, err := repo.GetRunningRound(ctx)
@@ -90,15 +99,17 @@ func (e *Engine) recoverStep(ctx context.Context) error {
 		}
 		now := time.Now()
 		if !now.Before(crashAt) {
+			e.multiplierService.Stop(running.ID)
 			crashed, err := e.service.CrashRound(ctx, running.ID)
 			if err != nil {
 				return err
 			}
+			e.multiplierService.Remove(running.ID)
+			e.liveState.State(ctx, "current", nil)
 			e.emit(ctx, realtime.EventRoundCrashed, crashed)
 			if _, err := e.settlementService.SettleRound(ctx, running.ID); err != nil {
 				return err
 			}
-			e.multiplierService.Remove(running.ID)
 			e.emit(ctx, realtime.EventRoundSettled, crashed)
 			running = nil
 		} else {
@@ -114,6 +125,9 @@ func (e *Engine) recoverStep(ctx context.Context) error {
 			e.liveState.State(ctx, "current", map[string]any{"round_id": running.ID, "round_number": running.RoundNumber, "status": running.Status, "started_at": running.StartedAt, "current_multiplier": current.StringFixed(2)})
 		}
 	}
+	if running == nil {
+		e.liveState.State(ctx, "current", nil)
+	}
 	upcoming, err := repo.GetUpcomingRound(ctx)
 	if err != nil {
 		return err
@@ -124,8 +138,9 @@ func (e *Engine) recoverStep(ctx context.Context) error {
 			return err
 		}
 	}
+
 	if upcoming.Status == RoundCreated {
-		if _, err := database.Query(ctx, repo.db).Exec(ctx, `UPDATE game_rounds SET status='BETTING_OPEN', betting_opened_at=clock_timestamp(), betting_closes_at=clock_timestamp()+$2*interval '1 second', growth_rate=$3 WHERE id=$1 AND status='CREATED'`, upcoming.ID, e.bettingWindow.Seconds(), e.growthRate); err != nil {
+		if _, err := database.Query(ctx, repo.db).Exec(ctx, `UPDATE game_rounds SET status='BETTING_OPEN', betting_opened_at=clock_timestamp(), betting_closes_at=CASE WHEN $4 THEN NULL ELSE clock_timestamp()+$2*interval '1 second' END, growth_rate=$3 WHERE id=$1 AND status='CREATED'`, upcoming.ID, e.bettingWindow.Seconds(), e.growthRate, running != nil); err != nil {
 			return err
 		}
 		upcoming, err = repo.GetRoundByID(ctx, upcoming.ID)
@@ -134,11 +149,11 @@ func (e *Engine) recoverStep(ctx context.Context) error {
 		}
 		e.emit(ctx, realtime.EventRoundOpened, upcoming)
 	}
-	if upcoming.Status == RoundBettingOpen {
+	if upcoming.Status == RoundBettingOpen && running == nil {
 		if upcoming.BettingClosesAt == nil {
-			// Upgrade recovery for a legacy process that opened a round during
-			// migration. Anchor to its original creation time, never restart now.
-			if _, err := database.Query(ctx, repo.db).Exec(ctx, `UPDATE game_rounds SET betting_opened_at=COALESCE(betting_opened_at,created_at), betting_closes_at=created_at+$2*interval '1 second' WHERE id=$1 AND betting_closes_at IS NULL`, upcoming.ID, e.bettingWindow.Seconds()); err != nil {
+			// Begin the countdown once after the preceding flight has settled.
+			// A persisted deadline survives engine restarts unchanged.
+			if _, err := database.Query(ctx, repo.db).Exec(ctx, `UPDATE game_rounds SET betting_opened_at=COALESCE(betting_opened_at,created_at), betting_closes_at=clock_timestamp()+$2*interval '1 second' WHERE id=$1 AND betting_closes_at IS NULL`, upcoming.ID, e.bettingWindow.Seconds()); err != nil {
 				return err
 			}
 			upcoming, err = repo.GetRoundByID(ctx, upcoming.ID)
@@ -171,7 +186,18 @@ func (e *Engine) recoverStep(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		e.liveState.State(ctx, "upcoming", nil)
+		e.multiplierService.Start(upcoming.ID, *upcoming.StartedAt)
 		e.emit(ctx, realtime.EventRoundStarted, upcoming)
+		// An instant 1.00x crash must not produce a live multiplier tick.
+		crashAt, err := (multiplier.Clock{Rate: upcoming.GrowthRate}).CrashAt(*upcoming.StartedAt, *upcoming.CrashPoint)
+		if err != nil {
+			return err
+		}
+		if time.Now().Before(crashAt) {
+			e.publisher.Publish(ctx, realtime.Event{Type: realtime.EventMultiplierUpdate, RoundID: upcoming.ID, RoundNumber: upcoming.RoundNumber, Multiplier: "1.00"})
+		}
+		return nil
 	}
 	if running == nil {
 		e.liveState.State(ctx, "current", nil)

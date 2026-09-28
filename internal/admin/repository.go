@@ -22,6 +22,9 @@ type Page struct {
 // Only explicit projections are allowed: never serialize database users or
 // rounds wholesale (password hashes and unrevealed fairness data are private).
 var projections = map[string]string{
+	"auto-bets":           "id,user_id,round_id,bet_number,amount::text,status,auto_cashout_multiplier::text,placed_at",
+	"auto-cashouts":       "id,user_id,round_id,bet_number,amount::text,status,auto_cashout_multiplier::text,cashout_multiplier::text,cashout_source,payout::text,placed_at,cashed_out_at",
+	"audit-logs":          "id,admin_id,user_id,action,reference,details,created_at",
 	"users":               "id,username,email,role,status,balance::text,created_at",
 	"bets":                "id,user_id,round_id,bet_number,amount::text,status,cashout_multiplier::text,payout::text,placed_at,cashed_out_at",
 	"rounds":              "id,round_number,status,server_seed_hash,client_seed,nonce,CASE WHEN status='SETTLED' THEN server_seed END AS server_seed,CASE WHEN status IN ('CRASHED','SETTLED') THEN crash_point::text END AS crash_point,betting_closes_at,started_at,ended_at,created_at",
@@ -30,7 +33,25 @@ var projections = map[string]string{
 	"wallet-transactions": "id,user_id,type,amount::text,reference,balance_before::text,balance_after::text,created_at",
 }
 
+// Add public account names while preserving explicit projections and existing filters.
+func identifiedProjection(resource, projection string) string {
+	switch resource {
+	case "bets", "auto-bets", "auto-cashouts", "deposits", "withdrawals", "wallet-transactions", "audit-logs":
+		projection += ",(SELECT u.username FROM users u WHERE u.id=" + table(resource) + ".user_id) AS username"
+	}
+	if resource == "audit-logs" {
+		projection += ",(SELECT u.username FROM users u WHERE u.id=admin_audit_logs.admin_id) AS admin_username"
+	}
+	return projection
+}
+
 func table(resource string) string {
+	if resource == "audit-logs" {
+		return "admin_audit_logs"
+	}
+	if resource == "auto-bets" || resource == "auto-cashouts" {
+		return "bets"
+	}
 	if resource == "rounds" {
 		return "game_rounds"
 	}
@@ -85,6 +106,8 @@ func dateRange(q url.Values) (any, any, error) {
 // @Produce json
 // @Param page query int false "Page starts at 1" default(1)
 // @Param page_size query int false "Page size, maximum 100" default(25)
+// @Param admin_id query int false "Administrator ID (audit logs)"
+// @Param action query string false "Audit action: STATUS or WALLET_ADJUSTMENT"
 // @Param status query string false "Status except wallet transactions"
 // @Param user_id query int false "User ID for bets, payments, wallet"
 // @Param round_id query int false "Round ID for bets"
@@ -95,6 +118,9 @@ func dateRange(q url.Values) (any, any, error) {
 // @Param to query string false "Exclusive RFC3339 timestamp"
 // @Success 200 {object} Page
 // @Failure 400,401,403,500 {object} ErrorResponse
+// @Router /api/admin/auto-bets [get]
+// @Router /api/admin/auto-cashouts [get]
+// @Router /api/admin/audit-logs [get]
 // @Router /api/admin/users [get]
 // @Router /api/admin/bets [get]
 // @Router /api/admin/rounds [get]
@@ -106,6 +132,7 @@ func (repo *Repository) list(ctx context.Context, resource string, q url.Values)
 	if !ok {
 		return Page{}, invalid("resource not found")
 	}
+	projection = identifiedProjection(resource, projection)
 	page, size := 1, 25
 	for key, dest := range map[string]*int{"page": &page, "page_size": &size} {
 		if q.Get(key) != "" {
@@ -125,20 +152,26 @@ func (repo *Repository) list(ctx context.Context, resource string, q url.Values)
 	}
 	args := []any{from, to}
 	date := "created_at"
-	if resource == "bets" {
+	if resource == "bets" || resource == "auto-bets" || resource == "auto-cashouts" {
 		date = "placed_at"
 	}
 	where := " WHERE ($1::timestamptz IS NULL OR " + date + ">=$1) AND ($2::timestamptz IS NULL OR " + date + "<$2)"
+	if resource == "auto-bets" {
+		where += " AND is_auto"
+	}
+	if resource == "auto-cashouts" {
+		where += " AND auto_cashout_multiplier IS NOT NULL"
+	}
 	add := func(expr string, value any) {
 		args = append(args, value)
 		where += " AND " + fmt.Sprintf(expr, len(args))
 	}
-	if status := q.Get("status"); status != "" && resource != "wallet-transactions" {
+	if status := q.Get("status"); status != "" && resource != "wallet-transactions" && resource != "audit-logs" {
 		add("status=$%d", status)
 	}
 	for _, key := range []string{"user_id", "round_id"} {
 		if value := q.Get(key); value != "" {
-			if (key == "round_id" && resource != "bets") || (key == "user_id" && (resource == "users" || resource == "rounds")) {
+			if (key == "round_id" && (resource != "bets" && resource != "auto-bets" && resource != "auto-cashouts")) || (key == "user_id" && (resource == "users" || resource == "rounds")) {
 				return Page{}, invalid("unsupported filter")
 			}
 			id, err := strconv.ParseInt(value, 10, 64)
@@ -159,6 +192,20 @@ func (repo *Repository) list(ctx context.Context, resource string, q url.Values)
 			}
 		}
 	}
+	if resource == "audit-logs" {
+		for _, key := range []string{"action", "reference"} {
+			if value := q.Get(key); value != "" {
+				add(key+"=$%d", value)
+			}
+		}
+		if value := q.Get("admin_id"); value != "" {
+			id, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || id < 1 {
+				return Page{}, invalid("invalid admin_id")
+			}
+			add("admin_id=$%d", id)
+		}
+	}
 	// Count and page share one statement and therefore one MVCC snapshot.
 	query := fmt.Sprintf(`WITH filtered AS (SELECT %s FROM %s %s), paged AS (SELECT * FROM filtered ORDER BY id DESC LIMIT %d OFFSET %d) SELECT json_build_object('items',COALESCE((SELECT json_agg(paged) FROM paged),'[]'::json),'total',(SELECT count(*) FROM filtered))`, projection, table(resource), where, size, (page-1)*size)
 	var raw []byte
@@ -174,7 +221,7 @@ func (repo *Repository) list(ctx context.Context, resource string, q url.Values)
 }
 
 func (repo *Repository) detail(ctx context.Context, resource string, id int64) (map[string]any, error) {
-	rows, err := repo.objects(ctx, "SELECT row_to_json(t) FROM (SELECT "+projections[resource]+" FROM "+table(resource)+" WHERE id=$1) t", id)
+	rows, err := repo.objects(ctx, "SELECT row_to_json(t) FROM (SELECT "+identifiedProjection(resource, projections[resource])+" FROM "+table(resource)+" WHERE id=$1) t", id)
 	if err != nil {
 		return nil, err
 	}

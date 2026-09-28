@@ -294,6 +294,12 @@ func main() {
 	defer cancel()
 
 	go store.Subscribe(ctx, realtimeHub)
+	cashAutoDone := make(chan struct{})
+	go func() { defer close(cashAutoDone); cashoutService.RunAutomatic(ctx) }()
+	defer func() { cancel(); <-cashAutoDone }()
+	autoDone := make(chan struct{})
+	go func() { defer close(autoDone); bettingService.RunAutomatic(ctx) }()
+	defer func() { cancel(); <-autoDone }()
 	engineDone := make(chan struct{})
 	go func() { defer close(engineDone); store.Lead(ctx, gameEngine.Run) }()
 	defer func() { cancel(); <-engineDone }()
@@ -303,6 +309,9 @@ func main() {
 	// ============================================================
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/game/rounds/{id}/verify", gameHandler.Verify)
+	mux.Handle("GET /api/bets/auto", authService.Middleware(http.HandlerFunc(bettingHandler.AutoSettings)))
+	mux.Handle("PUT /api/bets/auto/{panel}", authService.Middleware(http.HandlerFunc(bettingHandler.AutoSettings)))
 	admin.Register(mux, db, authService, cfg, func(ctx context.Context) map[string]any {
 		result := store.AdminStatus(ctx)
 		result["websocket_clients_this_instance"] = realtimeHub.ClientCount()
@@ -425,6 +434,7 @@ func main() {
 	mux.HandleFunc("GET /api/game/rounds/{id}", gameHandler.GetRound)
 	mux.HandleFunc("GET /api/game/rounds/{id}/fairness", gameHandler.Fairness)
 	histories := history.NewHandler(db)
+	histories.SetLimits(cfg.Limits)
 	mux.Handle("GET /api/bets", authService.Middleware(http.HandlerFunc(histories.Bets)))
 	mux.Handle("GET /api/wallet/transactions", authService.Middleware(http.HandlerFunc(histories.Transactions)))
 	mux.HandleFunc("GET /api/game/rounds", gameHandler.Recent)
